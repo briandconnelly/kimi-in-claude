@@ -108,3 +108,47 @@ def make_run(
     timed_out: bool = False,
 ) -> CommandRun:
     return CommandRun(stdout, stderr, exit_code, elapsed_ms, timed_out)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_kimi(request, monkeypatch):
+    """Unit tests must never spawn the real `kimi` binary.
+
+    They did: the suite invoked it 31 times per run (`--help` from preflight,
+    `provider list --json` from the model catalog, `--version` from status). That made
+    results depend on the developer's machine and let the CLI mutate state — one test
+    pointed KIMI_CODE_HOME at a literal "~definitely_not_a_real_user_zzzz", so kimi
+    created a directory of that name inside the repo, which was then committed.
+
+    Every affected call site already handles a missing binary (preflight fails open, the
+    catalog reports "none", status reports not-found), so refusing the spawn makes the
+    suite deterministic rather than changing what it proves.
+
+    Tests marked `integration` are exempt — exercising the real CLI is their whole point.
+    A unit test that needs a specific CLI response monkeypatches the seam itself, which
+    takes precedence over this fixture.
+    """
+    if request.node.get_closest_marker("integration"):
+        return
+
+    from kimi_in_claude import cli_contract
+    from kimi_in_claude._core import runtime
+
+    real_sync = runtime.run_sync_capture
+    real_async = runtime.run_async
+
+    def _missing() -> runtime.CommandRun:
+        return runtime.CommandRun("", runtime.BINARY_NOT_FOUND, 127, 0, False)
+
+    def guarded_sync(cmd, *args, **kwargs):
+        if cmd and cmd[0] == cli_contract.KIMI_BIN:
+            return _missing()
+        return real_sync(cmd, *args, **kwargs)
+
+    async def guarded_async(cmd, *args, **kwargs):
+        if cmd and cmd[0] == cli_contract.KIMI_BIN:
+            return _missing()
+        return await real_async(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(runtime, "run_sync_capture", guarded_sync)
+    monkeypatch.setattr(runtime, "run_async", guarded_async)

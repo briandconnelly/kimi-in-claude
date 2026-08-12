@@ -30,3 +30,10 @@ htmlcov/
 .DS_Store
 
 docs/superpowers/
+
+# Stray kimi state directories. A test that points KIMI_CODE_HOME at an unexpandable
+# path (a literal "~user") makes the CLI create that directory relative to the CWD.
+# Ignored as belt-and-braces; the real fix is that unit tests never spawn the CLI
+# (see tests/conftest.py).
+~*/
+.kimi-code/
