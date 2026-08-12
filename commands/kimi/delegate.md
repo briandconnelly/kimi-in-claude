@@ -3,7 +3,7 @@ description: Delegate a coding task to Kimi; get back a reviewable diff (not app
 argument-hint: "<task description>"
 ---
 
-Delegate a coding task to OpenAI Kimi using the `kimi_delegate` MCP tool from the
+Delegate a coding task to Kimi Code using the `kimi_delegate` MCP tool from the
 kimi-in-claude server.
 
 Task: $ARGUMENTS

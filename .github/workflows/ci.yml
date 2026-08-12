@@ -32,7 +32,7 @@ jobs:
             exit 1
           fi
 
-          # The CHANGELOG section is validated at release time (publish.yml), not here,
+          # The CHANGELOG section is validated at release time, not here,
           # so a version can sit under ## [Unreleased] without breaking CI.
           grep -Fq "\"version\": \"${version}\"" .claude-plugin/plugin.json
           # .mcp.json launches the published PyPI release, pinned to this exact version.

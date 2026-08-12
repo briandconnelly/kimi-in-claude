@@ -2,7 +2,7 @@
 name: collaborating-with-kimi
 description: >-
   Use whenever Claude Code should call or compose with Kimi: an ordinary consult, code review,
-  delegated implementation, transfer, async run, independent two-model attempt, or declared
+  delegated implementation, async run, independent two-model attempt, or declared
   review–revise workflow. Trigger on requests such as “ask Kimi,” “get a second opinion,” “have
   Kimi review this,” “delegate this to Kimi,” “have both models attempt this,” or “run
   review–revise,” and at
@@ -22,18 +22,23 @@ and verification skills instead of replacing them.
 1. Call `kimi_status` before a paid call. Proceed only when both `ready: true` and
    `extra_args_valid: true`. If either is false, stop and surface the corresponding readiness or
    operator-configuration detail.
-2. Treat `rate_limit` as advisory, with one exception. `kimi_status` reads it live from the Kimi
-   app-server (no model spend), so it is current when `ready: true`. Decide spend from it: proceed
-   on `available`; defer non-urgent calls on `limited` or `exhausted`; treat `unknown` (the live
-   read could not complete, or only a stale snapshot was available — `is_stale`/`as_of`),
-   `unavailable` (this kimi/account exposes no quota data), or `home_unverified: true` as
-   uncertainty — neither permission nor denial.
-   The account reports only the windows that currently bind it, so `primary` (shorter/rolling) or
-   `secondary` (longer) may be null. Read `note` for plain-language caveats before relying on it.
-3. Do not make a paid call when `rate_limit.status` is `blocked`. This is the exception to
-   advisory: the backend reports a spend control (`spend_control_reached: true`) and the call
-   will fail, so deferring does not help — no quota reset clears it. Stop and tell the user
-   spending is administratively blocked on their Kimi account.
+2. Treat `rate_limit` as **unavailable, and that is not a fault**. kimi exposes no
+   quota-read channel and its provider is user-configured, so `kimi_status` reports
+   `unavailable` rather than guessing. There is no quota signal to pace spend from — judge
+   cost from the size of the task, and surface a provider-side rate-limit error
+   (`kimi_rate_limited`) to the user if one comes back.
+3. Know what the tiers do and do not guarantee before choosing one. The `kimi` CLI has no
+   sandbox and no approval prompts, so:
+   - `kimi_consult` / `kimi_review_changes` run under a generated agent profile with **no
+     shell and no write tools**. That prevents modification, NOT disclosure: Kimi's Read
+     tool accepts absolute paths, so a prompt-injected repository can make it read other
+     files on the machine.
+   - `kimi_delegate` runs with the full tool set. Its edits land in a throwaway worktree
+     and come back as a diff that is never applied — but the worktree is not a boundary:
+     the task can also reach the network and write outside it. The diff shows what changed
+     in the worktree, not everything the run did.
+   - Do not point any tier at a workspace whose contents you would not hand to the
+     configured provider.
 4. Select one route below and load only its needed reference. Use a free dry-run when one exists.
 5. Declare the paid-call cap before the first active call, then stay within it.
 6. Branch on `ok`, then on the concrete tool/result type. Verify claims before acting.
@@ -47,7 +52,6 @@ and verification skills instead of replacing them.
 | Review changes already represented in git | `kimi_review_changes` | [active workflows](references/active-workflows.md) |
 | Proposed implementation diff from an isolated worktree | `kimi_delegate` | [active workflows](references/active-workflows.md) |
 | A consult, review, or delegate that can exceed the synchronous deadline — high-reasoning-effort or broad repo-grounded work, a multi-file or whole-branch review, or a substantial implementation task | matching `_async` tool | [background jobs](references/background-jobs.md) |
-| Move the Claude session into a resumable Kimi thread | `kimi_transfer` | [session transfer](references/transfer.md) |
 | Claude and Kimi attempt independently, then synthesize | independent two-member attempt | [independent attempt](references/independent-attempt.md) |
 | Claude drafts, Kimi critiques, Claude revises | declared review–revise | [review–revise](references/review-revise.md) |
 | Optional parameters, idempotency, or a tool error | current tool | [options and errors](references/options-and-errors.md) |
@@ -77,7 +81,7 @@ gate fails, make one call or none and move on.
 - On `ok: true`, branch on the concrete tool or result type before reading fields. Completed
   consult, review, and delegate results share active-result fields; only review has
   `verdict`/`confidence`, and only delegate has `diff`.
-- Discovery, dry-run, transfer, async-start, and job-lifecycle tools have tool-specific success
+- Discovery, dry-run, async-start, and job-lifecycle tools have tool-specific success
   schemas. A result fetched with `kimi_job_result` or `kimi_job_consume_result` matches the
   originating consult, review, or delegate tool.
 - Treat live tool schemas and `kimi_capabilities` as authoritative for exact inputs, outputs, error
@@ -87,12 +91,13 @@ gate fails, make one call or none and move on.
 
 Facts to weigh before any active call:
 
-- Every supplied prompt and context field is sent to OpenAI raw.
-- During every active call — including consult — Kimi may read other files in the resolved
-  workspace.
-- Kimi auto-loads the workspace's `AGENTS.md` and `.agents/skills/` skills, and discovers your
-  user-global skills under `$KIMI_CODE_HOME/skills/` from outside the workspace, even if the prompt
-  never mentions them; the isolation flags do not suppress any of this.
+- Every supplied prompt and context field is sent to your configured Kimi provider raw.
+- During every active call — including consult — Kimi may read other files. Its Read tool
+  accepts ABSOLUTE paths, so "read-only" does not confine it to the workspace.
+- Kimi auto-loads the workspace's `AGENTS.md` and discovers skills from its own user/project
+  directories and from the `extra_skill_dirs` entries in its config.toml, which may point
+  anywhere on disk — even if the prompt never mentions them. The isolation setting does not
+  suppress any of this; kimi's built-in skills always load.
 - Redaction is best-effort protection for gathered diffs and returned output only. It never protects
   supplied input, auto-loaded context, or files Kimi reads.
 
@@ -109,12 +114,14 @@ Facts to weigh before any active call:
   dry-run, and job-lifecycle calls. Omit it only for a pure question that needs no workspace.
 - **Privacy:** Do not make an active call when the supplied prompt, the supplied context, any file
   Kimi may inspect in the resolved workspace, or your user-global skills under
-  `$KIMI_CODE_HOME/skills/` contain something you cannot disclose (see Data exposure). Changing the
-  workspace does not exclude those skills.
+  the `extra_skill_dirs` in kimi's config.toml contain something you cannot disclose (see Data
+  exposure). Changing the workspace does not exclude those skills.
 - **Verification:** Treat findings, summaries, verdicts, and proposed changes as unverified claims.
   Run the applicable project checks yourself; read-only consult/review is not proof tests ran.
 - **Delegation:** Never apply a delegated diff before reviewing it. The plugin does not apply it to
-  the live tree. Delegate runs have no network egress, so keep the task self-contained.
+  the live tree. **Delegate runs are NOT network-isolated** — kimi has no sandbox, so the task
+  can push, fetch, install, and call out with the user's own privileges. Scope tasks
+  accordingly, and remember the returned diff shows only what changed in the worktree.
 - **Retry:** Never loop paid retries. After an ambiguous transport failure, retry the same concrete
   tool with the same arguments and `idempotency_key`; never switch between sync and async expecting
   that key to replay the run.

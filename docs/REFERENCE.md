@@ -196,23 +196,12 @@ records that sync runs also create). Operational semantics:
 
 ## Rate-limit reporting
 
-`kimi_status` reads the current quota **live** from the Kimi app-server
-(`account/rateLimits/read`, `source: app_server_live`) — a read-only call with no model-token
-spend and nothing persisted. Windows are classified by duration: `primary` is the shorter/rolling
-window, `secondary` the longer one; the account reports only the windows that currently bind it, so
-either may be null. `status` is `available`/`limited`/`exhausted`/`unknown` (the live read could not
-complete, or kimi is not ready — retry) / `unavailable` (this kimi/account exposes no quota data).
-On kimi 0.144+ the quota block no longer rides the `kimi exec` stream, so a run's `meta.rate_limit`
-is absent (see [Result envelopes](#result-envelopes) — null optionals are omitted from a delivered
-success `meta`). The block is advisory.
+`kimi_status` reports `rate_limit.status` as `unavailable`, always. kimi exposes no
+quota-read channel — there is no equivalent of an app-server quota request — and its provider is
+user-configured, so the server has nothing authoritative to report and does not guess. This is not
+a failure state; judge spend from the size of the task instead, and handle a provider-side
+`kimi_rate_limited` error if one comes back.
 
-`status` is also `blocked` when the backend reports a **spend** control — kimi 0.145+ carries
-`spendControlReached`, surfaced as `spend_control_reached`. It is not a quota window: no reset
-clears it, so `blocked` outranks every window verdict and reports `limiting_window: null` while
-still showing the windows. The field is tri-state, and null is *not* false: a kimi/backend that
-does not report the state leaves it null, and the window verdicts stay window-scoped — `available`
-attests that the reported windows are healthy, never that spending is administratively permitted.
-When the state is unreported and the windows are healthy, `note` says so.
 
 ## Workspace selection
 

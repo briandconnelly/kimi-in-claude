@@ -3,7 +3,7 @@ description: Ask Kimi (a different model) for a read-only second opinion
 argument-hint: "<question>"
 ---
 
-Ask OpenAI Kimi for an independent second opinion using the `kimi_consult` MCP
+Ask Kimi Code for an independent second opinion using the `kimi_consult` MCP
 tool from the kimi-in-claude server.
 
 Question: $ARGUMENTS

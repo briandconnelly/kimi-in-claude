@@ -3,47 +3,63 @@
 Use this fallback only after an MCP transport error shows the stdio server is unavailable.
 
 First ask the user to reconnect or restart the `kimi-in-claude` MCP server, then confirm recovery
-with free `kimi_status`. The plugin path is preferred because it supplies workspace-aware diff
-gathering, bounded input, best-effort redaction, and structured results.
+with free `kimi_status`. The plugin path is strongly preferred: it supplies workspace-aware diff
+gathering, bounded input, best-effort redaction, structured results, the throwaway worktree, and
+the orphaned-process cleanup that a bare CLI call has none of.
 
-While the server remains down, a one-off read-only consult or review may use:
+While the server remains down, a one-off **read-only** consult may use the command below. It
+reproduces the one control that actually constrains kimi — an agent profile whose `tools:` list
+omits every shell and write tool.
+
+Write the profile first, outside the repository:
 
 ```sh
-kimi exec \
-  --sandbox read-only \
-  --ephemeral \
-  --ignore-user-config \
-  --ignore-rules \
-  --disable remote_plugin \
-  --cd "$WORKSPACE" \
-  --skip-git-repo-check -
+AGENT="$(mktemp -d)/readonly.md"
+cat > "$AGENT" <<'EOF'
+---
+name: kimi-in-claude-readonly
+description: Read-only consultant with no shell or write tools.
+tools:
+  - Read
+  - Glob
+  - Grep
+---
+You are a read-only consultant. Answer using only the tools you have.
+EOF
 ```
 
-Send the prompt on stdin.
+Then run, from a directory the user approved for disclosure:
 
-- Keep every flag; if `kimi` rejects any of them, stop and surface the CLI drift — never drop a
-  flag to make the command run. (Together they apply the plugin's guarantee-bearing flags at its
-  strictest config isolation — no persisted session, no `$KIMI_CODE_HOME/config.toml`, no execpolicy
-  rules, no remote-plugin connectors, an explicit working root instead of the ambient directory.
-  The plugin itself sends the two config-isolation flags only when the operator raises isolation
-  above the default `inherit`.)
+```sh
+cd "$WORKSPACE" && kimi -p "$PROMPT" \
+  --agent-file "$AGENT" \
+  --output-format stream-json
+```
+
+- **Keep `--agent-file`.** It is the only thing preventing writes. If `kimi` rejects it, stop and
+  surface the CLI drift — never drop it to make the command run. Without it the run has Bash and
+  Write, with the user's own privileges and no sandbox.
+- Do **not** add `--add-dir`: it widens what kimi treats as its workspace.
+- `-y`, `--auto`, `--plan`, `--session`, and `--continue` are rejected in prompt mode anyway.
+- The prompt is an argv value — kimi ignores stdin. For anything large, write the prompt to a file
+  and point at it (`kimi -p "Read /abs/path/prompt.md and follow it exactly."`); argv dies past
+  roughly 950k characters with a Node `RangeError`, not a clean error.
 - Set `WORKSPACE` to a directory the user approved for disclosure.
 
-Even with these flags, Kimi auto-loads the resolved workspace's `AGENTS.md` and `.agents/skills/`
-skills, discovers your user-global skills under `$KIMI_CODE_HOME/skills/` — which `--ignore-user-config`
-does not suppress, since that flag drops only `$KIMI_CODE_HOME/config.toml` — and may read other files.
-An empty scratch `WORKSPACE` removes the ambient *repository* context but not those user-global
-skills: they are discovered from outside the workspace, so no `WORKSPACE` choice excludes them.
-An empty scratch `WORKSPACE` is not a read boundary either — the read-only sandbox bounds writes,
-not reads, so Kimi can still read files at other absolute paths.
+What this fallback does **not** buy you:
 
-- If nothing beyond the sanitized stdin prompt may be visible to Kimi, do not use this fallback
-  at all.
+- **It is not a read boundary.** Read-only bounds writes, not reads: kimi's Read tool accepts
+  absolute paths, so it can still read files anywhere on the machine and send them to the
+  configured provider. An empty scratch `WORKSPACE` removes ambient repository context but does
+  not confine reads.
+- Kimi still auto-loads the resolved workspace's `AGENTS.md` and discovers skills from its own
+  user/project directories and from the `extra_skill_dirs` entries in its config.toml, which may
+  point outside any workspace. Its built-in skills always load. No `WORKSPACE` choice excludes them.
+- There is no redaction. Everything you send goes to the provider raw.
+- There is no worktree and no orphan cleanup: a command kimi spawns can outlive the run.
 
-Before sending, gather, bound, and sanitize context yourself. This direct CLI route sends raw input,
-has no plugin result envelope, and does not provide the plugin's diff gathering or redaction
-protections. Treat the text response as an unverified claim.
+If nothing beyond a sanitized prompt may be visible to Kimi, do not use this fallback — wait for
+the server.
 
-Never construct a writable CLI fallback for delegation. Restore the MCP server for isolated
-propose-tier work. Do not repeatedly retry either route while the transport or setup condition is
-unchanged.
+**Never use a bare CLI call as a delegate substitute.** Without the plugin there is no throwaway
+worktree, so kimi edits the user's real tree directly, and no diff is captured for review.

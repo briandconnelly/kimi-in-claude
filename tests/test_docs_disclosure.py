@@ -28,8 +28,11 @@ _DOC_DISCLOSURE_SITES = (
 )
 
 # Both roots must be named. `.agents/skills/` alone is exactly the pre-#358 defect.
-_PROJECT_SKILLS_ROOT = ".agents/skills"
-_GLOBAL_SKILLS_ROOT = "$KIMI_CODE_HOME/skills"
+# kimi's two skill sources. It has no `.agents/skills` or `$HOME/skills` convention: skills
+# come from its own user/project discovery, plus `extra_skill_dirs` in config.toml, which
+# may point anywhere on disk. Both must be named wherever the disclosure appears.
+_PROJECT_SKILLS_ROOT = "user/project"
+_GLOBAL_SKILLS_ROOT = "extra_skill_dirs"
 
 
 @pytest.mark.parametrize("relpath", _DOC_DISCLOSURE_SITES)

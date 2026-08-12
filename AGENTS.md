@@ -4,7 +4,7 @@ Conventions for any agent (or human) working in this repository.
 
 ## What this is
 
-A Claude Code plugin that calls the OpenAI Kimi CLI via a FastMCP server. The Python package
+A Claude Code plugin that calls the Kimi Code CLI via an MCP server. The Python package
 is `kimi_in_claude` under `src/`. Generic, CLI-agnostic machinery lives in
 `kimi_in_claude/_core/` and is designed for later extraction into a shared `agent-bridge`
 package.
@@ -94,7 +94,7 @@ Architectural decisions that affect the agent-visible surface are recorded in `d
     A refactor that leaves the discovered surface byte-identical does not bump it. Coverage is
     over *contract* semantics, not *release* identity: the per-category carve-outs live on the
     tuple itself and are disclosed to clients on `fingerprint_covers`, which is why an ordinary
-    release moves no fingerprint (see Release coordination).
+    release moves no fingerprint.
   - **Breaking?** Flag it breaking (commit `!`/`BREAKING CHANGE:` footer + the `breaking-change` PR
     label) only when the change is *backward-incompatible* for a client: removing or renaming a
     field/tool/resource/prompt, retyping a field, adding a required input, narrowing an accepted
@@ -121,38 +121,14 @@ Architectural decisions that affect the agent-visible surface are recorded in `d
     machine-readable repair fields remain part of the discovered surface.
 - `CHANGELOG.md` follows Keep a Changelog: land every notable change under `## [Unreleased]`; cutting
   a release moves those entries into a new dated version section and leaves a fresh, empty
-  `## [Unreleased]` on top. See Release coordination for the version-bump set.
-
-## Release coordination
-
-The release PR bumps three version literals in lockstep — `pyproject.toml` version,
-`.claude-plugin/plugin.json`, and the `kimi-in-claude==X.Y.Z` PyPI pin in `.mcp.json` — and rolls
-`CHANGELOG.md`'s `## [Unreleased]` into a dated section. `FINGERPRINT` is **not** part of the release
-bump: it moves in the feature/fix PRs that change the agent-visible surface (see Versioning), and the
-release PR only verifies it already reflects everything shipping. (`README.md` carries no pinned
-version literal — it uses a dynamic PyPI badge and marketplace install — so it needs no bump.) See
-`docs/RELEASING.md` for the full release procedure and the one-time PyPI/GitHub setup.
-
-**The lockstep version bump belongs only in the dedicated `chore: release X.Y.Z` PR — never in a
-feature/fix PR.** Feature and fix PRs change `FINGERPRINT` (when the surface changed) and add their
-entry under `## [Unreleased]`, but leave the three version literals — `pyproject.toml`,
-`.claude-plugin/plugin.json`, and the `.mcp.json` pin — at the current released version. (`uv.lock`
-is not a version source and still changes freely in feature PRs when dependencies move; its own
-`kimi-in-claude` `version` line is a derived mirror of `pyproject.toml` that `uv lock` refreshes as
-part of the release PR.) The release PR is the *only* place those three literals move, and it is
-merged immediately before the tag/publish. The reason is the `.mcp.json` pin (`kimi-in-claude==X.Y.Z`):
-the moment it lands on `main`, that version must already exist on PyPI, or a plugin install from
-`main` hits an unresolvable pin. Bumping it in a feature PR opens that broken-pin window for the
-entire gap until the release ships. So a release is two PRs: the work lands under `## [Unreleased]`
-(no version-literal change), then a `chore: release` PR does the lockstep bump plus the
-`## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD` rollover.
+  `## [Unreleased]` on top.
 
 ## Python support
 
 `requires-python>=3.11`, following SPEC 0 (support Python releases from roughly the last three
 years). CI runs the gate on every supported minor. The supported set is defined by the Python trove
 classifiers in `pyproject.toml`; a packaging test asserts the CI matrix in
-`.github/workflows/test.yml` (the reusable gate called by both `ci.yml` and `publish.yml`) and the
+`.github/workflows/test.yml` (the reusable gate `ci.yml` calls) and the
 `requires-python` floor stay in lockstep with those classifiers
 (so this prose deliberately avoids naming specific versions). Changing the support set is
 deliberate: update the classifiers, the CI matrix, and `requires-python` together, and note it in
@@ -173,127 +149,36 @@ deliberate: update the classifiers, the CI matrix, and `requires-python` togethe
 - The **95% coverage floor** is enforced in CI. Live tests that hit the real `kimi` CLI are marked
   `integration` and excluded by default (`uv run pytest -m integration --no-cov`).
 
-## Agent identity
+## Project status
 
-Agent sessions in this repo run under dedicated bot identities — GitHub App actors distinct from
-the maintainer's personal account, never the maintainer's own login (an upheld convention, not an
-enforced boundary — the first bullet below scopes it): an agent's commits, pushes, `gh` calls, and
-PRs attribute to its bot identity, while the maintainer's own git operations on the same machine
-keep the personal account. The accounts the claim protocol recognizes are the
-`$agent_ids` allowlist in the Git / PRs query below — that list is the roster's only home, and this
-prose deliberately names no agent. Setup and mechanism live in the `agent-bot-identity` skill; what
-matters here is what an agent identity does and does not buy.
+**Local-only.** This is not published to PyPI, ships no marketplace manifest, and has no GitHub
+remote yet, so `.mcp.json` launches the working tree with `uv run --directory` instead of pinning a
+release. There is no release process to follow and no issue-claim protocol; when distribution
+starts, `tests/test_packaging.py` is what should change first.
 
-- **An agent identity buys attribution, not containment.** An agent running on the maintainer's
-  machine executes as the maintainer's OS user and can reach the personal GitHub credentials there,
-  so it holds *both* identities. The ruleset's required review binds the **bot token**, not the
-  agent. Everything in Git / PRs below — never merging, never self-approving — is a convention
-  agents uphold, not a boundary that stops them. The only hard boundaries are each identity's own
-  permission grants (for a GitHub App, its installation list) and this repo's server-side rulesets.
-- **Agent identities are enrolled without the Workflows permission — a requirement for any identity
-  added here — so GitHub rejects their pushes that touch `.github/workflows/`.** For an enrolled
-  identity this is enforced server-side, not a convention: a change under that path has to come
-  from the maintainer (that is why #295's workflow removal could not be pushed by the agent
-  working it). CI logic *outside* that
-  path — scripts the workflows invoke, composite actions — is still writable by agents, which is
-  part of why the human review gate matters.
-- **A GitHub App bot actor cannot be an issue assignee.** `gh issue edit --add-assignee` fails for
-  bot actors, and `Issues: write` is already the widest grant, so no permission fixes it. The
-  label-based claim protocol in Git / PRs exists to work around this.
+## The safety model, in one place
 
-## Git / PRs
+kimi has **no sandbox and no approvals**. Two controls stand in, and the difference between them
+matters when you change anything in `runspace.py`, `kimi.py`, or `cli_contract.py`:
 
-- **Conventional Commits** for every commit and PR title. Allowed types: `feat`, `fix`, `chore`,
-  `docs`, `refactor`, `test`, `perf`, `ci`, `build`, `revert`. Optional scope from the codebase
-  areas: `jobs`, `cli-contract`, `core`, `tools`, `schemas`, `worktree`, `packaging`, `config`
-  (e.g. `feat(jobs): add async lifecycle`). Subject is imperative, lowercase, no trailing period.
-  Mark breaking changes with `!` (`feat!:`) or a `BREAKING CHANGE:` footer (see Versioning).
-- **Squash-merge only.** A PR becomes a single commit whose subject is the PR title, so **the PR
-  title must itself be a valid Conventional Commit**. Keep each PR to one logical change — if the
-  title needs an "and", split the PR.
-- Branch names are `<type>/<slug>` matching the commit type (e.g. `feat/async-jobs`, `docs/conventions`).
-- **Claim an issue before working it, and never work one someone else has taken.** Before starting,
-  check the assignees (`gh issue view ISSUE_NUMBER --json assignees,title`) and run the active-claim
-  query below. Stop if either is taken: the issue is assigned to anyone other than the maintainer
-  directing your session, or it carries an active claim that is not yours.
-- **The claim is a comment, and its identity is that comment's id.** Sessions cannot be told apart
-  by actor: many sessions post as the same bot account, and more than one recognized account may
-  participate, so neither the comment author nor the `agent:in-progress` label identifies a session
-  — the comment id is the only unique key, and every rule below turns on it. Claim by commenting first, with `<!-- agent-claim -->` as the first line; **record the `id` the
-  API returns** — that is your claim for the rest of the issue's life. The label is shared state with
-  no owner: an index for humans and search, written only by the agent that wins the race below.
-- **An active claim is a claim comment whose id no release names — and only comments from
-  recognized agent accounts are protocol data.** A release comment's first line is exactly
-  `<!-- agent-release:CLAIM_ID -->`, naming the one claim it releases. The query below keys both
-  markers on the recognized accounts' immutable account ids — the `$agent_ids` allowlist
-  (rename-proof, unlike logins). That allowlist is the roster's only home, and it changes only by a
-  reviewed edit to this file, only for an identity the maintainer operates and directs to follow
-  this protocol. Racing agents compute the same winner only when they run the same list, and a
-  feature branch or worktree can carry a stale roster, so two rules keep the list synchronized: run
-  the claim query as it stands on the default branch's tip (`git fetch origin && git show
-  origin/main:AGENTS.md`), not from your checkout; and a newly enrolled identity posts its first
-  claim only after its enrollment has merged to the default branch. De-enrollment runs in reverse:
-  the identity stops claiming, every active claim it holds is released, and only then is its id
-  removed — removing an id erases its comments from protocol state, so an unreleased claim would
-  silently vanish and the issue would read as free. A claim or release posted by any unlisted
-  account can neither take nor free an issue. The query fetches **every** comments page (`--paginate`), so a claim or release past page
-  one still counts. It prints the winning active claim, or nothing if the issue is free. A non-zero
-  exit means a page fetch or parse failed — discard any output and re-run; never treat a failed run
-  as "free":
+- The read-only `--agent-file` profile is the **enforcing** control for consult and review. If you
+  make it possible to launch a read-only tier without it, the tier silently becomes an
+  unrestricted agent. `build_exec_command` raises rather than allow this; keep it that way.
+- The throwaway worktree is **defense in depth only**. Verified: kimi writes outside it when told
+  to. Never describe it as containment, in code comments or in docs.
 
-  ```sh
-  set -o pipefail
-  gh api repos/briandconnelly/kimi-in-claude/issues/ISSUE_NUMBER/comments --paginate | jq -s '
-    [
-      292553156     # briandconnelly-agent[bot]
-    ] as $agent_ids                   # recognized agent accounts — the roster
-    | add
-    | map(select(.user.id as $u | $agent_ids | index($u) != null))
-    | [ .[] | .body
-          | capture("^<!-- agent-release:(?<id>[0-9]+) -->(\r?\n|$)").id | tonumber ] as $released
-    | [ .[] | select(.body | test("^<!-- agent-claim -->(\r?\n|$)")) ]
-    | map(select(.id as $i | ($released | index($i)) | not)) | min_by(.id) // empty'
-  ```
+Read-only prevents modification, not disclosure — kimi's Read tool takes absolute paths.
+`COMPATIBILITY.md` lists every non-guarantee; `docs/UPGRADING-KIMI.md` lists the probes that must
+be re-run before trusting any of this against a new kimi version.
 
-  Both markers must be the *entire* first line — trailing text on the marker line makes it inert.
+## Verification expectations
 
-- **Resolve a race by lowest claim id, then take the label.** After commenting, re-run that query.
-  The active claim with the lowest `id` wins: REST ids are unique ascending integers, so they never
-  tie and every racing agent computes the same winner. (`gh issue view --json comments` returns
-  opaque GraphQL node ids — `IC_kwDO…` — which carry no order and cannot decide this; use REST.) If
-  the winner is your claim id, take the label (`gh issue edit ISSUE_NUMBER --add-label
-  agent:in-progress`). If it is not, release your own claim, **leave the label alone** — it belongs
-  to the winner — and stop.
-- **Release your own claim whenever you stop working the issue** — you lost the race, the work
-  landed, or you abandoned it. Post `<!-- agent-release:CLAIM_ID -->` naming the id of *your* claim,
-  and remove the label (`gh issue edit ISSUE_NUMBER --remove-label agent:in-progress`) only if you
-  held the winning claim. **Never release a claim id that is not yours** — that hands the issue to
-  the next agent while its owner is still working. A stale claim blocks the next agent. (Bot
-  actors cannot self-assign — see Agent identity.)
-- Branch for feature work; do not commit directly to the default branch. Link the issue in the PR
-  body (`Closes #N`); label the PR with a type and (for issues) a priority.
-- Preserve `Co-authored-by:` trailers (pairing, agent attribution) — they must survive the squash.
-- **Agents never merge PRs; the maintainer merges.** An agent may merge only on an explicit,
-  in-session instruction to merge that specific PR. Open the PR, get checks green, and stop.
-- Don't add `pull_request_target` workflows.
-- Don't self-approve reviews.
-- After pushing new commits to a PR that was already reviewed, request fresh review rather than
-  relying on the stale approval.
-- **Whether Copilot reviews a PR depends on who authored it**, but merging always requires every
-  review thread resolved (`required_review_thread_resolution`).
-  - **Human-authored PRs** get an automatic Copilot review on open and on every push (the
-    `copilot_code_review` ruleset rule).
-  - **Bot/agent-authored PRs** — any non-human author — get **no automatic Copilot review**: the
-    ruleset rule skips authors that hold no Copilot seat. This is **deliberately not automated** — requesting the Copilot
-    reviewer through the API needs a full user identity that CI/automation tokens don't have (a
-    fine-grained PAT is refused `403`, and a broad classic PAT was declined on security grounds; see
-    #294 / #236). So the maintainer requests Copilot on a bot PR with the web-UI **"Request review"**
-    button. If you authored the PR, ask them to — and again after each push you want re-reviewed.
+Claims in this repo are meant to be traceable to a probe. When you add or change one:
 
-  Treat Copilot's feedback like any review:
-  - Evaluate each comment on its merits — verify it against the code, don't blindly implement.
-  - Fix what's valid, and reply to each comment noting the resolution.
-  - A comment you decline (e.g. a false positive) still gets a reply explaining why, and its
-    thread still needs resolving.
-  - Iterate until the review reports no new actionable comments, then resolve every thread before
-    merging.
+- Behavioral claims about the `kimi` CLI go in `cli_contract.py` with the captured evidence
+  referenced, and the capture lands in `docs/kimi-help/<version>/`.
+- Failure-signature patterns use **captured** message text. A classifier tuned to an invented
+  phrasing passes its tests and misclassifies in production.
+- Before trusting a negative result (no findings, no matches, a clean sweep), confirm the same
+  check can surface a known positive. Several bugs here were found exactly that way — the
+  orphan sweep reported clean while an independent `pgrep` found a survivor.

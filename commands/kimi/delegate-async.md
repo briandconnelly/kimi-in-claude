@@ -3,7 +3,7 @@ description: Delegate a coding task to Kimi in the background; get a job_id to p
 argument-hint: "<task description>"
 ---
 
-Delegate a long-running coding task to OpenAI Kimi in the background using the
+Delegate a long-running coding task to Kimi Code in the background using the
 `kimi_delegate_async` MCP tool from the kimi-in-claude server.
 
 Task: $ARGUMENTS
