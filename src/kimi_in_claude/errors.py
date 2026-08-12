@@ -209,6 +209,14 @@ _REPAIR_BY_CODE: dict[str, tuple[RepairStep, str | None, bool, str]] = {
         "supported_reasoning_efforts), pick a model/effort pair explicitly, or omit "
         "reasoning_effort (and unset KIMI_IN_CLAUDE_REASONING_EFFORT) to let Kimi resolve it.",
     ),
+    "empty_response": (
+        "retry_then_report",
+        None,
+        True,
+        "Kimi finished without producing an answer. kimi emits no --output-last-message, "
+        "so a read-only tier recovers its answer from the event stream; an empty stream "
+        "means there is nothing to report. Retry, and if it persists narrow the question.",
+    ),
     "invalid_model": (
         "correct_arguments",
         "kimi_models",

@@ -2290,6 +2290,9 @@ async def _prepare_consult(
         "isolation": isolation_v,
         "model": model or d.model,
         "timeout_seconds": timeout_seconds,
+        # consult runs in a throwaway worktree like every other tier, because kimi has no
+        # read-only sandbox — so it needs a git budget of its own.
+        "git_timeout": config.git_timeout_seconds(),
         # Provenance, not an input: written unconditionally (unlike the two conditional
         # keys below) because it is hash-excluded, so its presence cannot invalidate a
         # pre-#393 dedup entry. The worker needs it to reach a delivered envelope (#393).

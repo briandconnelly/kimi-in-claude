@@ -241,6 +241,9 @@ async def _run(job_dir: Path, spec: dict, meta: Meta) -> dict:
                 model=spec.get("model"),
                 reasoning_effort=spec.get("reasoning_effort"),
                 extra_context=spec.get("extra_context", ""),
+                # consult now runs in a worktree too (kimi has no read-only sandbox), so it
+                # needs the git budget. Specs written before that change lack the key.
+                git_timeout=spec.get("git_timeout"),
                 on_event=on_event,
             )
         if kind == "kimi_review_changes":

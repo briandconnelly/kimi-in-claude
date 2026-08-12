@@ -387,6 +387,7 @@ ErrorCode = Literal[
     # the config key itself stays cli_contract_changed) (#309).
     "invalid_reasoning_effort",
     "invalid_model",
+    "empty_response",
     # kimi rejected an operator-supplied KIMI_IN_CLAUDE_EXTRA_ARGS passthrough entry
     # (an unaccepted option / config key / profile). Operator config to fix, NOT a
     # plugin contract drift — kept distinct from cli_contract_changed so the fail-loud

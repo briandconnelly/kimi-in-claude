@@ -303,6 +303,20 @@ def ensure_repo_with_head(repo: str, *, timeout: int) -> None:
     _ensure_repo_with_head(repo, timeout)
 
 
+def is_git_repo(path: str, *, timeout: int) -> bool:
+    """Whether ``path`` is inside a git work tree WITH at least one commit.
+
+    Both conditions matter to callers deciding whether a worktree can be created: a repo
+    with no commits has nothing to base one on. Never raises — a caller uses this to pick
+    a strategy, not to report an error.
+    """
+    try:
+        _ensure_repo_with_head(path, timeout)
+    except (NotAGitRepoError, NoCommitsError, WorktreeError):
+        return False
+    return True
+
+
 def create(repo: str, *, timeout: int, on_parent: Callable[[str], None] | None = None) -> Worktree:
     """Create a worktree mirroring the live tree's tracked state.
 
@@ -568,6 +582,12 @@ def _seed_uncommitted(repo: str, wt: str, timeout: int) -> str | None:
 # Build/cache artifacts an agent may create by running code — excluded from the
 # captured diff so the proposed patch is just the meaningful source changes.
 _ARTIFACT_EXCLUDES = (
+    # This server's own per-run handshake files (the prompt it wrote for kimi and the
+    # answer kimi wrote back) live inside the worktree. They are plumbing, not the agent's
+    # work, so they must never appear in a diff offered to the caller for review. The
+    # literal is duplicated from cli_contract.HANDSHAKE_DIR_NAME because _core must not
+    # import the parent package; tests/test_runspace.py asserts the two stay in step.
+    ":(exclude,glob)**/.kimi-in-claude/**",
     ":(exclude,glob)**/__pycache__/**",
     ":(exclude,glob)**/*.py[co]",
     ":(exclude,glob)**/.pytest_cache/**",

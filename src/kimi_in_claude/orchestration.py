@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast, get_args
 
-from kimi_in_claude import kimi, normalize, prompts
+from kimi_in_claude import config, kimi, normalize, prompts, runspace
 from kimi_in_claude._core import gitdiff, redaction
 from kimi_in_claude.errors import make_error, serialize_error
 from kimi_in_claude.schemas import (
@@ -204,18 +204,18 @@ def finalize_consult(result: kimi.KimiRunResult, *, meta: Meta) -> dict:
                 meta=meta,
             )
         )
-    # Deliberate prose-passthrough exception (#159): consult is Q&A, so a plain-language
-    # answer is itself a valid result. Unlike review (whose value is the structured
-    # verdict/findings), there is nothing to mislead here — the prose maps onto `summary`
-    # — so exit-0 non-JSON is surfaced as the answer rather than the
-    # invalid_json/schema_violation error the strict review path now raises.
-    return dump_success(
-        ConsultResult(
-            summary=(raw.text or "").strip() or "(kimi returned no message)",
-            raw_response=raw,
-            meta=meta,
-        )
-    )
+    # Deliberate prose-passthrough exception: consult is Q&A, so a plain-language answer is
+    # itself a valid result. kimi has no --output-schema flag, so the JSON shape is only
+    # ever prompt-requested and prose is the common case, not the exception. Unlike review
+    # (whose value is the structured verdict/findings) there is nothing to mislead here.
+    answer = (raw.text or "").strip()
+    if not answer:
+        # An empty answer is a FAILURE, not a summary. kimi has no --output-last-message,
+        # so a read-only consult recovers its answer solely from the event stream; if that
+        # stream carried no assistant text there is nothing to report, and returning a
+        # success whose summary says "no message" would launder that into a usable result.
+        return runspace.empty_answer_error(meta)
+    return dump_success(ConsultResult(summary=answer, raw_response=raw, meta=meta))
 
 
 def _review_invalid_response_error(code: str, last_message: str | None, meta: Meta) -> dict:
@@ -390,25 +390,40 @@ async def run_consult(
     model: str | None,
     reasoning_effort: str | None = None,
     extra_context: str = "",
+    git_timeout: int | None = None,
     on_event: Callable[[str], None] | None = None,
 ) -> dict:
-    """Run a read-only consult and return the ConsultResult/ErrorResult envelope."""
+    """Run a read-only consult and return the ConsultResult/ErrorResult envelope.
+
+    Runs through `runspace.run_isolated`, so kimi gets the read-only agent profile (no
+    Bash, no Write) inside a throwaway worktree, and anything it somehow changed is
+    discarded with that worktree. `capture_diff=False`: a consult answers, it does not
+    propose edits.
+
+    `allow_non_repo=True` keeps consult usable outside a git repository — it then runs in
+    an empty temp dir and the envelope carries runspace.NO_REPO_WARNING, since kimi can
+    read no repository files there.
+    """
     prompt = prompts.build_consult_prompt(question, extra_context or "")
-    result = await kimi.run_kimi_exec(
+    outcome = await runspace.run_isolated(
         prompt,
         cwd=cwd,
+        meta=meta,
         sandbox=sandbox,
         isolation=isolation,
         timeout_seconds=timeout_seconds,
         model=model,
         reasoning_effort=reasoning_effort,
+        git_timeout=git_timeout if git_timeout is not None else config.git_timeout_seconds(),
+        capture_diff=False,
         output_schema=CONSULT_OUTPUT_SCHEMA,
-        # consult is read-only Q&A; repo membership is irrelevant, so never let a
-        # non-repo workspace block the run.
-        skip_git_repo_check=True,
+        allow_non_repo=True,
         on_event=on_event,
     )
-    return finalize_consult(result, meta=meta)
+    if outcome.error is not None:
+        return outcome.error
+    assert outcome.result is not None
+    return finalize_consult(outcome.result, meta=meta)
 
 
 def review_label(scope: str, base: str | None, commit: str | None) -> str:
