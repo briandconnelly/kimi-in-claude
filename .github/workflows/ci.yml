@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least-privilege default token; this workflow only reads the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release-lockstep:
+    name: Release lockstep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate version literals agree
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "pyproject.toml version must be X.Y.Z; got ${version}" >&2
+            exit 1
+          fi
+
+          # The CHANGELOG section is validated at release time (publish.yml), not here,
+          # so a version can sit under ## [Unreleased] without breaking CI.
+          grep -Fq "\"version\": \"${version}\"" .claude-plugin/plugin.json
+          # .mcp.json launches the published PyPI release, pinned to this exact version.
+          # Anchor on the trailing quote+comma so 0.1.1 does NOT match ==0.1.10.
+          grep -Fq "kimi-in-claude==${version}\"," .mcp.json
+
+          echo "Version ${version} is consistent across pyproject.toml, plugin.json, .mcp.json"

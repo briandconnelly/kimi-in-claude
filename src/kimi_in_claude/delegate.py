@@ -1,0 +1,209 @@
+"""Shared propose-tier orchestration.
+
+`run_delegate` runs a coding task in an isolated git worktree (worktree create →
+`kimi exec` with `workspace-write` → capture diff → cleanup) and returns the
+normalized result envelope WITHOUT touching the live tree. Both the synchronous
+`kimi_delegate` tool and the background `_worker` call this, so the worktree
+logic lives in exactly one place. This module is import-light (no FastMCP app) so
+the background worker can use it without constructing the server.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from kimi_in_claude import config, kimi, normalize, prompts
+from kimi_in_claude._core import redaction, worktree
+from kimi_in_claude.errors import make_error, serialize_error
+from kimi_in_claude.schemas import (
+    ContextSummary,
+    DelegateResult,
+    ErrorDetail,
+    ErrorResult,
+    Meta,
+    RawResponse,
+    Usage,
+    dump_success,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def _diffstat(diff: str) -> ContextSummary:
+    """Cheap files/added/removed counts from a unified diff."""
+    files = added = removed = 0
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            files += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return ContextSummary(files_changed=files, lines_added=added, lines_removed=removed)
+
+
+def _bound_diff(diff: str, meta: Meta, max_bytes: int) -> str:
+    """Cap an inline diff at max_bytes, stamping meta.truncated/truncation_hint when
+    it overflows. Mirrors the review-diff bound in `_core/gitdiff.py` so a delegate
+    run never returns an unbounded diff into the agent's context."""
+    encoded = diff.encode("utf-8", "replace")
+    if len(encoded) <= max_bytes:
+        return diff
+    meta.truncated = True
+    meta.truncation_hint = (
+        f"diff exceeded {max_bytes} bytes and was truncated; narrow the task to a "
+        "smaller change, or raise KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES to receive it whole"
+    )
+    return encoded[:max_bytes].decode("utf-8", "ignore")
+
+
+def _apply_run_meta(meta: Meta, result: kimi.KimiRunResult) -> tuple[Usage | None, str | None]:
+    """Stamp a finished run's process metadata onto meta; return (usage, session)."""
+    meta.elapsed_ms = result.run.elapsed_ms
+    meta.command_exit_code = result.run.exit_code
+    meta.compat_warnings = result.dropped_flags
+    kimi.reconcile_dropped_model(result, meta)
+    usage, session_id = normalize.parse_event_metadata(result.events)
+    meta.usage = usage
+    meta.session_id = session_id
+    # meta.rate_limit stays None: kimi 0.144 no longer emits quota on the exec stream (#321);
+    # kimi_status fetches it live (no model spend), not per paid run. See orchestration.py.
+    return usage, session_id
+
+
+async def run_delegate(
+    task: str,
+    cwd: str,
+    meta: Meta,
+    *,
+    sandbox: str,
+    isolation: str,
+    timeout_seconds: int,
+    model: str | None,
+    reasoning_effort: str | None = None,
+    git_timeout: int,
+    max_diff_bytes: int | None = None,
+    on_worktree_parent: Callable[[str], None] | None = None,
+    on_event: Callable[[str], None] | None = None,
+) -> dict:
+    """Run the propose orchestration and return a DelegateResult|ErrorResult dict.
+
+    `meta` is the pre-built envelope meta (tier=propose). The worktree is always
+    cleaned up, even on failure or kimi error. `on_worktree_parent`, if given, is
+    called with the temp worktree parent as soon as it exists so a background
+    worker can record it for hard-kill cleanup. `max_diff_bytes` caps the inline
+    diff (None → the configured default) so a large change cannot flood the agent's
+    context; the diffstat still reflects the full diff."""
+    try:
+        wt = worktree.create(cwd, timeout=git_timeout, on_parent=on_worktree_parent)
+    except worktree.NotAGitRepoError as exc:
+        return serialize_error(
+            ErrorResult(
+                error=make_error(
+                    "not_a_git_repo",
+                    str(exc),
+                    details=ErrorDetail(field="workspace_root"),
+                ),
+                meta=meta,
+            )
+        )
+    except (worktree.NoCommitsError, worktree.WorktreeError) as exc:
+        return serialize_error(
+            ErrorResult(
+                error=make_error(
+                    "worktree_error",
+                    str(exc)[:300],
+                    repair_alternative=(
+                        "Ensure the repo has at least one commit and a clean git state."
+                    ),
+                ),
+                meta=meta,
+            )
+        )
+
+    # Captured while the worktree exists, for rewriting worktree-absolute paths out of
+    # Kimi's prose below — the teardown in the `finally` runs before that text is built.
+    wt_aliases = worktree.path_aliases(wt.path)
+    if wt.baseline_warning:
+        meta.security_warnings = [wt.baseline_warning]
+    try:
+        result = await kimi.run_kimi_exec(
+            prompts.build_delegate_prompt(task),
+            cwd=wt.path,
+            sandbox=sandbox,
+            isolation=isolation,
+            timeout_seconds=timeout_seconds,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            on_event=on_event,
+        )
+        _apply_run_meta(meta, result)
+        if result.run.exit_code != 0 or result.run.binary_missing or result.run.timed_out:
+            err = kimi.classify_failure(
+                result.run,
+                last_message=result.last_message,
+                events=result.events,
+                # See orchestration._stamp_meta: a backend effort rejection is the
+                # caller's argument, not contract drift (#309).
+                reasoning_effort=meta.reasoning_effort,
+                # Kimi runs with cwd=wt.path, so its raw stderr/event text can name the
+                # worktree, which is dead by the time this envelope reaches the caller
+                # (#420, the #412 remainder). sanitize_prose is the one approved
+                # relativize+redact composition (see the comment on the last_message
+                # rewrite below, which explains why the two passes can't be called
+                # separately); it REPLACES classify_failure's own redact_text call rather
+                # than adding a second pass.
+                sanitize=lambda t: worktree.sanitize_prose(t, wt_aliases) or "",
+            )
+            return serialize_error(ErrorResult(error=err, meta=meta))
+        diff = worktree.capture_diff(wt.path, timeout=git_timeout)
+    except worktree.WorktreeError as exc:
+        return serialize_error(
+            ErrorResult(
+                error=make_error("worktree_error", str(exc)[:300]),
+                meta=meta,
+            )
+        )
+    finally:
+        worktree.remove(cwd, wt, timeout=git_timeout)
+
+    meta.context_summary = _diffstat(diff)
+    # Redact inline secret-looking values from Kimi's free-text (mirroring the diff
+    # redaction below, #58: a secret echoed in prose — e.g. quoting a config it read —
+    # would otherwise reach the caller unredacted) AND rewrite worktree-absolute paths to
+    # repo-relative, since the worktree is gone by now and those paths are dead on arrival
+    # (#412). Both passes are in `sanitize_prose` rather than called here in sequence
+    # because they interact: neither plain order is safe, and the safe combination is not
+    # something a call site should have to remember. See that function for the two attacks.
+    # One call covers both fields built from this text (summary and raw_response.text).
+    last_message = worktree.sanitize_prose(result.last_message, wt_aliases)
+    summary = (last_message or "").strip() or "(kimi returned no summary)"
+    if not diff.strip():
+        summary = f"Kimi made no changes. {summary}"
+    else:
+        # Apply the same secret redaction the review path uses (gitdiff.gather_diff)
+        # before the diff leaves this process: drop secret-looking file hunks and
+        # replace inline secret values, recording the paths on meta (#57). Redact the
+        # full diff first, THEN bound, so the byte cap applies to sanitized text and a
+        # secret can't survive inside a truncated fragment. context_summary above is
+        # intentionally computed on the pre-redaction diff, mirroring the review path's
+        # pre-redaction numstat, so it still reflects the full change.
+        diff, meta.redacted_paths = redaction.redact(diff)
+        # A cap of None (sync default, or a legacy job spec lacking the key) — or an
+        # invalid one from a corrupt spec (non-int, zero, negative) — falls back to
+        # the configured, floored default rather than slicing with a bad bound.
+        valid_cap = isinstance(max_diff_bytes, int) and max_diff_bytes > 0
+        cap = max_diff_bytes if valid_cap else config.max_delegate_diff_bytes()
+        diff = _bound_diff(diff, meta, cap)
+    return dump_success(
+        DelegateResult(
+            summary=summary,
+            diff=diff or None,
+            raw_response=RawResponse(
+                text=last_message, session_id=meta.session_id, model=meta.model
+            ),
+            next_steps=["Review the returned diff; apply it to your tree only if correct."],
+            meta=meta,
+        )
+    )

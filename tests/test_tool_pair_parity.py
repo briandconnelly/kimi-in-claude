@@ -1,0 +1,264 @@
+"""Sync/async tool-pair parity (#204).
+
+Each active tool has a synchronous and an ``_async`` variant that share the same
+input preparation (isolation/detail resolution, workspace resolution, meta,
+placeholder + input-size pre-flight, and the run ``spec``). Before extracting that
+shared preparation into per-pair helpers, these tests pin the invariant the
+extraction must preserve:
+
+* the ``spec`` each variant builds is identical except ``timeout_seconds`` (sync
+  clamps the per-call timeout; async uses the background-job deadline);
+* the pre-flight error envelopes (``input_too_large``, workspace-resolve errors)
+  carry an identical ``error`` block across the pair;
+* competing pre-flight errors resolve in the same order they do today; and
+* the idempotency argument hash of a pair is invariant once ``timeout_seconds`` is
+  held equal, so the refactor cannot silently invalidate live dedup entries.
+
+They pass against the pre-refactor code and must keep passing after it.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from kimi_in_claude import server
+
+
+@pytest.fixture
+def capture_tail(monkeypatch):
+    """Intercept the pair's tail calls, recording the ``spec`` (and meta/cwd) each
+    variant builds instead of starting a real run."""
+    calls: dict[str, dict] = {}
+
+    async def fake_run_sync(meta, cwd, **kw):
+        calls["sync"] = {"meta": meta, "cwd": cwd, **kw}
+        return {"ok": True, "_captured": "sync"}
+
+    async def fake_start_async(meta, cwd, **kw):
+        calls["async"] = {"meta": meta, "cwd": cwd, **kw}
+        return {"ok": True, "_captured": "async"}
+
+    monkeypatch.setattr(server, "_run_sync", fake_run_sync)
+    monkeypatch.setattr(server, "_start_async", fake_start_async)
+    return calls
+
+
+def _no_git_preflight(monkeypatch):
+    """Let the delegate pair build its spec without a real repo on disk."""
+    monkeypatch.setattr(server.worktree, "ensure_repo_with_head", lambda *a, **k: None)
+
+
+def _specs_equal_modulo_timeout(sync_spec: dict, async_spec: dict) -> None:
+    a = {k: v for k, v in sync_spec.items() if k != "timeout_seconds"}
+    b = {k: v for k, v in async_spec.items() if k != "timeout_seconds"}
+    assert a == b
+    # The only hash-affecting difference must be timeout_seconds: with it held equal
+    # the idempotency arg hash is identical, so the refactor cannot drift the dedup
+    # identity of a pair (beyond the deliberate sync-timeout vs async-deadline gap).
+    aligned = dict(async_spec)
+    aligned["timeout_seconds"] = sync_spec["timeout_seconds"]
+    assert server._arg_hash_for_spec(sync_spec) == server._arg_hash_for_spec(aligned)
+
+
+# --- spec parity -------------------------------------------------------------
+
+
+async def test_consult_pair_spec_parity(clean_env, tmp_path, capture_tail):
+    kw = dict(workspace_root=str(tmp_path), extra_context="ctx", isolation="inherit")
+    await server.kimi_consult("q", **kw)
+    await server.kimi_consult_async("q", **kw)
+    _specs_equal_modulo_timeout(capture_tail["sync"]["spec"], capture_tail["async"]["spec"])
+
+
+async def test_review_pair_spec_parity(clean_env, tmp_path, capture_tail):
+    kw = dict(
+        scope="branch",
+        base="main",
+        paths=["a.py"],
+        workspace_root=str(tmp_path),
+        extra_context="ctx",
+        isolation="inherit",
+    )
+    await server.kimi_review_changes(**kw)
+    await server.kimi_review_changes_async(**kw)
+    _specs_equal_modulo_timeout(capture_tail["sync"]["spec"], capture_tail["async"]["spec"])
+
+
+async def test_delegate_pair_spec_parity(clean_env, tmp_path, monkeypatch, capture_tail):
+    _no_git_preflight(monkeypatch)
+    kw = dict(workspace_root=str(tmp_path), isolation="inherit")
+    await server.kimi_delegate("do work", **kw)
+    await server.kimi_delegate_async("do work", **kw)
+    _specs_equal_modulo_timeout(capture_tail["sync"]["spec"], capture_tail["async"]["spec"])
+
+
+# --- pre-flight error-envelope parity ----------------------------------------
+
+
+async def test_consult_pair_input_too_large_parity(clean_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    kw = dict(workspace_root=str(tmp_path), extra_context="y" * 2000)
+    sync = await server.kimi_consult("q", **kw)
+    asyncr = await server.kimi_consult_async("q", **kw)
+    assert sync["error"]["code"] == "input_too_large"
+    assert sync["error"] == asyncr["error"]
+
+
+async def test_delegate_pair_input_too_large_parity(clean_env, tmp_path, monkeypatch):
+    _no_git_preflight(monkeypatch)
+    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    kw = dict(workspace_root=str(tmp_path))
+    sync = await server.kimi_delegate("t" * 2000, **kw)
+    asyncr = await server.kimi_delegate_async("t" * 2000, **kw)
+    assert sync["error"]["code"] == "input_too_large"
+    assert sync["error"] == asyncr["error"]
+
+
+@pytest.mark.parametrize(
+    ("sync_tool", "async_tool", "args"),
+    [
+        ("kimi_consult", "kimi_consult_async", ("q",)),
+        ("kimi_review_changes", "kimi_review_changes_async", ()),
+        ("kimi_delegate", "kimi_delegate_async", ("do work",)),
+    ],
+)
+async def test_pair_workspace_error_parity(clean_env, sync_tool, async_tool, args):
+    # A relative workspace_root fails resolution before any spend; both variants must
+    # report the identical error block.
+    sync = await getattr(server, sync_tool)(*args, workspace_root="relative/not/abs")
+    asyncr = await getattr(server, async_tool)(*args, workspace_root="relative/not/abs")
+    assert sync["error"]["code"] == "invalid_workspace_root"
+    assert sync["error"] == asyncr["error"]
+
+
+# --- competing pre-flight precedence (Kimi review of the plan) --------------
+
+
+async def test_consult_workspace_error_beats_input_too_large(clean_env, monkeypatch):
+    # Workspace resolution runs before the input-size check: a bad workspace wins even
+    # when the input is also oversized. Pinned for both variants.
+    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    big = "y" * 2000
+    for tool in ("kimi_consult", "kimi_consult_async"):
+        res = await getattr(server, tool)("q", workspace_root="relative", extra_context=big)
+        assert res["error"]["code"] == "invalid_workspace_root"
+
+
+async def test_delegate_placeholder_beats_input_too_large(clean_env, tmp_path, monkeypatch):
+    # The env-placeholder guard runs before the task-size check.
+    _no_git_preflight(monkeypatch)
+    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    for tool in ("kimi_delegate", "kimi_delegate_async"):
+        res = await getattr(server, tool)("t" * 2000, workspace_root=str(tmp_path))
+        assert res["error"]["code"] == "unexpanded_env_placeholder"
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("kimi_consult", ("q",)),
+        ("kimi_review_changes", ()),
+        ("kimi_delegate", ("do work",)),
+    ],
+)
+async def test_sync_tool_uses_one_defaults_snapshot(
+    clean_env, tmp_path, monkeypatch, capture_tail, tool, args
+):
+    # A sync invocation resolves config.defaults() once and threads that single snapshot
+    # through preparation, so a request cannot mix a timeout from one snapshot with
+    # model/isolation from another (Kimi + Copilot review of #204). `isolation` is left
+    # to default so the isolation-fallback path (which would otherwise re-read
+    # config.defaults() inside _resolve_isolation) is exercised.
+    _no_git_preflight(monkeypatch)
+    calls = {"n": 0}
+    real_defaults = server.config.defaults
+
+    def counting_defaults():
+        calls["n"] += 1
+        return real_defaults()
+
+    monkeypatch.setattr(server.config, "defaults", counting_defaults)
+    await getattr(server, tool)(*args, workspace_root=str(tmp_path))
+    assert calls["n"] == 1
+
+
+async def test_delegate_input_too_large_beats_git_preflight(clean_env, tmp_path, monkeypatch):
+    # The task-size check runs before the git preflight: an oversized task is rejected
+    # without ever probing the repo (both variants).
+    def boom(*a, **k):
+        raise AssertionError("git preflight must not run when the task is already too large")
+
+    monkeypatch.setattr(server.worktree, "ensure_repo_with_head", boom)
+    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    for tool in ("kimi_delegate", "kimi_delegate_async"):
+        res = await getattr(server, tool)("t" * 2000, workspace_root=str(tmp_path))
+        assert res["error"]["code"] == "input_too_large"
+
+
+async def test_consult_pair_spec_parity_with_reasoning_effort(clean_env, tmp_path, capture_tail):
+    # #309: the conditional reasoning_effort spec key must be written identically by
+    # both variants (present when set, absent when not).
+    kw = dict(workspace_root=str(tmp_path), isolation="inherit", reasoning_effort="high")
+    await server.kimi_consult("q", **kw)
+    await server.kimi_consult_async("q", **kw)
+    assert capture_tail["sync"]["spec"]["reasoning_effort"] == "high"
+    _specs_equal_modulo_timeout(capture_tail["sync"]["spec"], capture_tail["async"]["spec"])
+
+
+async def test_delegate_pair_spec_parity_with_reasoning_effort(
+    clean_env, tmp_path, monkeypatch, capture_tail
+):
+    _no_git_preflight(monkeypatch)
+    kw = dict(workspace_root=str(tmp_path), isolation="inherit", reasoning_effort="low")
+    await server.kimi_delegate("do work", **kw)
+    await server.kimi_delegate_async("do work", **kw)
+    assert capture_tail["sync"]["spec"]["reasoning_effort"] == "low"
+    _specs_equal_modulo_timeout(capture_tail["sync"]["spec"], capture_tail["async"]["spec"])
+
+
+# --- blank-input parity (#411) ------------------------------------------------
+# The blank-argument guard is the one pre-flight error whose envelope is deliberately
+# NOT byte-identical across a pair: `invalid_arguments` names the tool that was called
+# in `repair.tool` (errors.py, #184/N3), so steering an async caller at its sync twin
+# would be wrong. Everything else in the block must still match.
+
+
+def _error_sans_tool_identity(err: dict, tool: str) -> dict:
+    """The error block with the two members that deliberately name the called tool
+    NORMALIZED rather than discarded: `repair.tool` is dropped, and `message` keeps
+    everything after its `"<tool>: "` prefix (the boundary builder's
+    `"<tool>: N invalid argument(s): ..."` format). Stripping only the prefix keeps the
+    rest of the message under the parity assertion, so post-prefix wording cannot drift
+    between the twins unnoticed (Copilot review)."""
+    out = {k: v for k, v in err.items() if k != "repair"}
+    out["repair"] = {k: v for k, v in err["repair"].items() if k != "tool"}
+    out["message"] = err["message"].removeprefix(f"{tool}: ")
+    return out
+
+
+@pytest.mark.parametrize(
+    ("sync_tool", "async_tool", "field"),
+    [
+        ("kimi_consult", "kimi_consult_async", "question"),
+        ("kimi_delegate", "kimi_delegate_async", "task"),
+    ],
+)
+async def test_pair_blank_input_parity(
+    clean_env, tmp_path, monkeypatch, sync_tool, async_tool, field
+):
+    _no_git_preflight(monkeypatch)
+    sync = await getattr(server, sync_tool)("   ", workspace_root=str(tmp_path))
+    asyncr = await getattr(server, async_tool)("   ", workspace_root=str(tmp_path))
+    assert sync["error"]["code"] == "invalid_arguments"
+    assert sync["error"]["details"]["field"] == field
+    # Identical everywhere except where the tool is deliberately named — including the
+    # message BODY, which must match once each twin's own name is stripped.
+    assert _error_sans_tool_identity(sync["error"], sync_tool) == _error_sans_tool_identity(
+        asyncr["error"], async_tool
+    )
+    # ...and there each twin names ITSELF, never the other.
+    assert sync["error"]["repair"]["tool"] == sync_tool
+    assert asyncr["error"]["repair"]["tool"] == async_tool
+    assert sync["error"]["message"].startswith(f"{sync_tool}:")
+    assert asyncr["error"]["message"].startswith(f"{async_tool}:")

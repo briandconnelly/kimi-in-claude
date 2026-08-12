@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "kimi-in-claude": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "kimi-in-claude==0.17.0",
+        "kimi-in-claude-mcp"
+      ]
+    }
+  }
+}

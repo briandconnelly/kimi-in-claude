@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+.env
+.env.*
+
+# Secrets / credentials (never commit)
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+*_credentials.json
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.ty_cache/
+
+# OS
+.DS_Store
+
+docs/superpowers/

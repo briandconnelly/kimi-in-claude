@@ -1,0 +1,561 @@
+"""Config knobs: env defaults, clamps, tier/sandbox/isolation -> kimi flags."""
+
+from __future__ import annotations
+
+import os
+import re
+import shlex
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from kimi_in_claude import cli_contract
+from kimi_in_claude._core import redaction, worktree
+from kimi_in_claude._core.jobs import JobStore
+
+ENV_PREFIX = "KIMI_IN_CLAUDE_"
+
+MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 10, 600
+DEFAULT_TIMEOUT_SECONDS = 300
+DEFAULT_MAX_INPUT_BYTES = 200_000
+# Byte ceiling for a subprocess's captured output (stdout+stderr aggregate), a
+# robustness guard against OOM of the long-lived stdio server (#155). Separate
+# from MAX_INPUT_BYTES (the diff/input budget) and deliberately generous: the
+# JSONL event stream of a long kimi run is large but bounded. Output past the
+# cap is dropped (head+tail window kept); the run is NOT killed.
+DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+# Byte cap for the diff a delegate run returns inline. Oversized diffs are
+# truncated with meta.truncated/meta.truncation_hint so agent token cost stays
+# bounded; the diffstat still reflects the full diff.
+DEFAULT_MAX_DELEGATE_DIFF_BYTES = 200_000
+DEFAULT_GIT_TIMEOUT_SECONDS = 60
+
+# Background-job knobs. TTL: how long a terminal record is kept. MAX_SECONDS: a
+# job's wall-clock cap (a poll past it reaps the job). MAX_COUNT: retained records
+# per workspace (oldest terminal evicted first).
+DEFAULT_JOB_TTL_SECONDS = 86_400
+DEFAULT_JOB_MAX_SECONDS = 1_800
+DEFAULT_JOB_MAX_COUNT = 50
+
+VALID_TIERS = ("consult", "propose", "apply")
+VALID_ISOLATIONS = ("inherit", "ignore-skills")
+
+# Diagnostic logging. Logs go to stderr (and optionally a file); never stdout,
+# which is the stdio JSON-RPC channel. WARNING keeps a quiet default while still
+# capturing the disconnect/timeout trail a future incident needs (#39).
+DEFAULT_LOG_LEVEL = "WARNING"
+VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+DEFAULT_TIER = "consult"
+DEFAULT_ISOLATION = "inherit"
+
+# Default sandbox for each tier. consult is strictly read-only; propose/apply need
+# write access (propose is confined to a temp worktree, apply to the live tree).
+TIER_SANDBOX = {
+    "consult": cli_contract.SANDBOX_READ_ONLY,
+    "propose": cli_contract.SANDBOX_WORKSPACE_WRITE,
+    "apply": cli_contract.SANDBOX_WORKSPACE_WRITE,
+}
+
+
+@dataclass
+class Defaults:
+    tier: str
+    sandbox: str
+    isolation: str
+    model: str | None
+    reasoning_effort: str | None
+    timeout_seconds: int
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+# Shape bounds for a reasoning-effort VALUE (#309), shared by the MCP params (which
+# advertise and enforce them at the call boundary) and the pre-spend check on the
+# resolved value — the only guard the KIMI_IN_CLAUDE_REASONING_EFFORT env default
+# passes through, since env config never crosses the MCP boundary. The set stays open
+# (the backend judges the value); these exclude only argv/serialization-hostile
+# shapes: a NUL breaks Popen outright, other control characters have no place in a
+# config override, an unpaired surrogate cannot be UTF-8-encoded (it breaks both argv
+# encoding and envelope serialization), and an argv-scale string fails as a misleading
+# kimi_not_found. "Control character" means Unicode category Cc — C0, DEL, and the
+# C1 block (U+0080-U+009F) alike; "surrogate" is category Cs (U+D800-U+DFFF). Real
+# efforts are ≤ ~7 chars; 128 is generous headroom.
+REASONING_EFFORT_MAX_LENGTH = 128
+# ECMA-safe for the advertised JSON-Schema `pattern` (no \Z, which ECMA lacks).
+# Deliberately does NOT name the surrogate range: under a non-`u`-flag ECMA engine a
+# [\uD800-\uDFFF] class also matches the code UNITS of astral characters — legitimate
+# values — so publishing it would make spec-compliant client validators reject them.
+# A compliant UTF-8 JSON transport cannot deliver an unpaired surrogate anyway; the
+# character-wise check below closes the residual (env defaults, in-process calls,
+# lenient parsers).
+REASONING_EFFORT_VALUE_PATTERN = r"^[^\x00-\x1F\x7F-\x9F]*$"
+
+
+def reasoning_effort_shape_error(value: str) -> str | None:
+    """Why `value` fails the reasoning-effort shape bounds, or None when it passes.
+
+    Value-free (safe for an error message). Checked character-wise, not via the
+    regex, so a trailing newline — which Python's `$` would admit — is caught too."""
+    if len(value) > REASONING_EFFORT_MAX_LENGTH:
+        return f"exceeds {REASONING_EFFORT_MAX_LENGTH} characters"
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value):
+        return "contains a control character"
+    if any(0xD800 <= ord(c) <= 0xDFFF for c in value):
+        return "contains a surrogate code point"
+    return None
+
+
+def defaults() -> Defaults:
+    tier = os.environ.get(f"{ENV_PREFIX}TIER_DEFAULT", DEFAULT_TIER)
+    tier = tier if tier in VALID_TIERS else DEFAULT_TIER
+    isolation = os.environ.get(f"{ENV_PREFIX}ISOLATION", DEFAULT_ISOLATION)
+    isolation = isolation if isolation in VALID_ISOLATIONS else DEFAULT_ISOLATION
+    sandbox = os.environ.get(f"{ENV_PREFIX}SANDBOX_DEFAULT") or TIER_SANDBOX[tier]
+    sandbox = sandbox if sandbox in cli_contract.VALID_SANDBOXES else TIER_SANDBOX[tier]
+    return Defaults(
+        tier=tier,
+        sandbox=sandbox,
+        isolation=isolation,
+        model=os.environ.get(f"{ENV_PREFIX}MODEL") or None,
+        reasoning_effort=os.environ.get(f"{ENV_PREFIX}REASONING_EFFORT") or None,
+        timeout_seconds=_env_int(f"{ENV_PREFIX}TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+    )
+
+
+# A value the MCP host failed to expand: the literal `${VAR}` form delivered
+# verbatim when the host does not perform ${...} substitution. The body must be a
+# valid shell variable name so malformed forms are not misreported.
+_ENV_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+
+
+def is_env_placeholder(value: str | None) -> bool:
+    """True when an env value is an unexpanded `${...}` placeholder."""
+    return value is not None and bool(_ENV_PLACEHOLDER_RE.match(value.strip()))
+
+
+def placeholder_env_vars() -> list[str]:
+    """Names of tracked `KIMI_IN_CLAUDE_*` env vars left as unexpanded `${...}`."""
+    return sorted(
+        name
+        for name, value in os.environ.items()
+        if name.startswith(ENV_PREFIX) and is_env_placeholder(value)
+    )
+
+
+ENV_PLACEHOLDER_REPAIR = (
+    "These env vars are literal ${...}; your MCP host is not expanding env "
+    "substitutions. Use an env_vars passthrough list, or set literal values."
+)
+
+
+# --- Opt-in extra `kimi` args passthrough (KIMI_IN_CLAUDE_EXTRA_ARGS, #231) ----
+# An operator-only knob to add extra global `kimi` options to every PAID exec
+# invocation (consult/review/delegate) — its motivating use is selecting a
+# model_provider/profile when isolation sends --ignore-user-config (which drops the
+# user's config.toml, leaving CLI -c overrides the only lever). Deliberately an
+# allowlist, not arbitrary argv: a bare positional or unknown flag could clobber the
+# envelope-bearing plugin flags (--json/--cd/--sandbox/--output-schema/…) or smuggle a
+# prompt, hollowing out the fail-loud CLI contract.
+EXTRA_ARGS_ENV = f"{ENV_PREFIX}EXTRA_ARGS"
+
+# The allowlisted global options — all value-taking, and all verified `kimi` global+exec options
+# (re-probed against kimi-cli 0.147.0 on 2026-08-07: every form below parses, while a bare or
+# unknown flag is rejected as `unexpected argument`). THIS parser accepts short `-c`/`-p` only
+# space-separated — the attached `-cKEY=VAL` is refused here as an unknown flag, because the
+# attached-form split below fires only on long `--flag=value`. That is a deliberate narrowing of
+# ours, NOT a CLI limit: kimi itself accepts `-cKEY=VAL` (clap's attached short-option value),
+# re-probed on both 0.146.0 and 0.147.0 on 2026-08-07. The narrowing is safe-direction — we pass
+# through strictly less than kimi would take — so keep it, but do not restate it as a kimi fact.
+# The long forms accept both `--config VAL` and `--config=VAL`.
+_EXTRA_CONFIG_FLAGS = ("-c", "--config")  # -c KEY=VALUE  (a dotted-path config override)
+_EXTRA_PROFILE_FLAGS = ("-p", "--profile")  # -p NAME       (layer a named config profile)
+_EXTRA_FEATURE_FLAGS = ("--enable", "--disable")  # --enable/--disable FEATURE
+
+# Feature NAMES that are wholly plugin-owned, refused even though `--enable`/`--disable`/`-c`
+# are allowlisted: the plugin disables the remote_plugin connectors on every model-bearing call
+# as a documented security guarantee (#287), so an operator override must not touch the feature
+# in EITHER direction. `--enable` would defeat the guarantee; `--disable` is redundant with the
+# plugin but, if allowed, injects a passthrough descriptor that could misattribute a plugin-owned
+# guarantee-flag drift to KIMI_IN_CLAUDE_EXTRA_ARGS — so both are refused. `--enable X` is exactly
+# `-c features.X=true`, so the `-c` spellings are denied too (see _DENIED_CONFIG_KEYS below). NOTE:
+# an opaque `--profile` can still re-enable it — the same documented operator-trust boundary that
+# bounds the `-c` denials (see COMPATIBILITY.md).
+_PLUGIN_OWNED_FEATURES = frozenset({cli_contract.REMOTE_PLUGIN_FEATURE})
+# Both the dotted key AND the bare `features` parent table are refused: `-c
+# features={remote_plugin=true}` (a TOML inline table) reaches the same setting through the
+# parent key, so denying only the dotted form leaves that inline-table bypass open. Denying
+# bare `features` refuses the whole-table inline form; a different feature is still settable
+# via its own dotted key (`-c features.some_other=true`), which is NOT in this set.
+_FEATURES_NAMESPACE = "features"
+_DENIED_CONFIG_KEYS = frozenset(
+    {_FEATURES_NAMESPACE, f"{_FEATURES_NAMESPACE}.{cli_contract.REMOTE_PLUGIN_FEATURE}"}
+)
+
+# Config-key roots refused even though `-c/--config` is allowlisted: a `-c` value can
+# override ANY dotted config path, and these would weaken a guarantee this server
+# advertises — the sandbox capability boundary and the no-network-egress promise
+# (sandbox_workspace_write.network_access lives under `sandbox`), the approval posture,
+# or the host-env isolation of commands kimi runs (shell_environment_policy.inherit
+# could expose the server's environment, secrets included). Refused at parse time so
+# they never reach kimi. NOTE: `--profile` layers an opaque on-disk TOML this parser
+# cannot inspect, so a profile remains a documented operator-trust boundary (see
+# COMPATIBILITY.md); this denylist covers only the inspectable `-c` surface.
+_DENIED_CONFIG_KEY_ROOTS = frozenset({"sandbox", "approval_policy", "shell_environment_policy"})
+
+# Config keys refused because they would contradict provenance the result envelope reports
+# (#310, #309): each has first-class, meta-reported controls — a per-call parameter and a
+# KIMI_IN_CLAUDE_* env default — which flow into resolved_defaults and the named meta field.
+# A passthrough `-c model=…` (or `-c model_reasoning_effort=…`) would run on the operator's
+# value while the meta field still reports the per-call/server value (null in the common
+# case). Deliberately EXACT keys, not a new root in _DENIED_CONFIG_KEY_ROOTS: the root
+# machinery's `model_` prefix match would also refuse `model_provider` — the passthrough's
+# motivating use case (#231, above) — and `model_verbosity`, which stay allowed. The check
+# runs on the normalized key, so it also refuses lookalike spellings (`Model`, quoted
+# segments) that kimi's own `-c` parser — a naive '.'-split with literal, case-sensitive
+# segments — would treat as junk keys rather than the real key: deliberate, harmless
+# over-denial matching the #287 treatment. NOTE: an opaque `--profile` can still set these —
+# the same documented operator-trust boundary that bounds every `-c` denial
+# (COMPATIBILITY.md). Values are (meta field, env var, per-call parameter, issue) used to
+# build the value-free refusal message.
+_RESERVED_META_CONFIG_KEYS: dict[str, tuple[str, str, str, str]] = {
+    "model": ("meta.model", f"{ENV_PREFIX}MODEL", "model", "#310"),
+    cli_contract.MODEL_REASONING_EFFORT_CONFIG_KEY: (
+        "meta.reasoning_effort",
+        f"{ENV_PREFIX}REASONING_EFFORT",
+        "reasoning_effort",
+        "#309",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ExtraArgs:
+    """Parsed KIMI_IN_CLAUDE_EXTRA_ARGS. `tokens` is the validated argv to inject
+    (may carry secret `-c` VALUES — never echo it). `descriptors` are sanitized
+    identifiers (allowlisted flag names, config KEYS, profile/feature NAMES — never a
+    `-c` value) safe to surface in kimi_status / an error envelope and to match against
+    a kimi drift stderr. `error` is a value-free 'why invalid' string set only when the
+    knob is present but failed to parse/validate; `configured` is True whenever the env
+    var is set to a non-blank value."""
+
+    tokens: tuple[str, ...] = ()
+    descriptors: tuple[str, ...] = ()
+    option_count: int = 0
+    configured: bool = False
+    error: str | None = None
+
+    @property
+    def valid(self) -> bool:
+        """True when the knob is unset, or set and parsed/validated cleanly."""
+        return self.error is None
+
+
+def _extra_args_flag_kind(flag: str) -> str | None:
+    if flag in _EXTRA_CONFIG_FLAGS:
+        return "config"
+    if flag in _EXTRA_PROFILE_FLAGS:
+        return "profile"
+    if flag in _EXTRA_FEATURE_FLAGS:
+        return "feature"
+    return None
+
+
+def _safe_token(token: str) -> str:
+    """A bounded, secret-redacted echo of an offending token for an error message."""
+    return (redaction.redact_text(token) or "")[:60]
+
+
+def _normalize_config_key(key: str) -> str:
+    """Conservatively canonicalize a dotted `-c` config KEY for denylist matching: trim each
+    dotted segment, strip surrounding TOML quotes, and lowercase. This is deliberate
+    OVER-matching, not a mirror of kimi — kimi's own `-c` parser (config_override.rs,
+    verified at rust-v0.144.3) trims the whole key, then does a naive '.'-split with each
+    segment used literally: case-sensitive, no quote handling. So a spaced/cased/quoted
+    variant (`features . Remote_Plugin`, `features."remote_plugin"`, `"features".remote_plugin`)
+    is a junk key kimi's config never reads, not an alias of the real one; refusing such
+    lookalikes anyway costs nothing and keeps the denylist unprobeable (#287, #312). shlex
+    strips unescaped quotes before this, but an escaped/preserved quote can survive to here."""
+    segments = []
+    for seg in key.split("."):
+        segments.append(seg.strip().strip("\"'").strip().lower())
+    return ".".join(segments)
+
+
+def _parse_extra_args(raw: str) -> ExtraArgs:
+    """Tokenize + allowlist-validate a non-blank KIMI_IN_CLAUDE_EXTRA_ARGS value."""
+    try:
+        toks = shlex.split(raw)
+    except ValueError:
+        return ExtraArgs(configured=True, error="could not tokenize (unbalanced quotes?)")
+    tokens: list[str] = []
+    descriptors: list[str] = []
+    count = 0
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        # Long `--flag=value` attached form → one token; split on the FIRST `=`.
+        attached = tok.startswith("--") and "=" in tok
+        if attached:
+            flag, value = tok.split("=", 1)
+        else:
+            flag = tok
+        kind = _extra_args_flag_kind(flag)
+        if kind is None:
+            return ExtraArgs(configured=True, error=f"unsupported argument: {_safe_token(tok)}")
+        if not attached:
+            if i + 1 >= len(toks):
+                return ExtraArgs(configured=True, error=f"{flag} requires a value")
+            value = toks[i + 1]
+            i += 1
+        # A value that itself looks like a flag is a smuggled option, not a value.
+        if value.startswith("-"):
+            return ExtraArgs(configured=True, error=f"{flag} value looks like a flag")
+        if kind == "config":
+            if "=" not in value:
+                return ExtraArgs(configured=True, error=f"{flag} expects KEY=VALUE")
+            key = value.split("=", 1)[0]
+            if not key.strip():
+                return ExtraArgs(configured=True, error=f"{flag} has an empty config key")
+            # One canonicalization for every denylist check (#312): normalize the whole key
+            # once and derive the root from it, so a quoted root ('"sandbox_mode"=…') is
+            # refused with the same conservative over-matching as the exact-key denials
+            # below (see _normalize_config_key — in kimi those spellings are junk keys,
+            # so this closes a silently-accepted no-op, not a sandbox bypass).
+            normalized = _normalize_config_key(key)
+            root = normalized.split(".", 1)[0]
+            if any(root == d or root.startswith(f"{d}_") for d in _DENIED_CONFIG_KEY_ROOTS):
+                return ExtraArgs(
+                    configured=True,
+                    error=(
+                        f"config key '{key.strip()}' is refused: it could weaken the sandbox / "
+                        "network / approval / host-env-isolation guarantees this server advertises"
+                    ),
+                )
+            if normalized in _DENIED_CONFIG_KEYS:
+                return ExtraArgs(
+                    configured=True,
+                    error=(
+                        f"config key '{key.strip()}' is refused: the plugin disables the "
+                        "remote_plugin connectors as a security guarantee (#287); an operator "
+                        "override cannot re-enable them"
+                    ),
+                )
+            reserved = _RESERVED_META_CONFIG_KEYS.get(normalized)
+            if reserved is not None:
+                meta_field, env_var, param, issue = reserved
+                return ExtraArgs(
+                    configured=True,
+                    error=(
+                        f"config key '{key.strip()}' is reserved — it would contradict the "
+                        f"provenance reported in result envelopes ({meta_field}); set "
+                        f"{env_var} or the per-call {param} parameter instead ({issue})"
+                    ),
+                )
+            tokens += [flag, value]
+            # Record the flag too (not just the key), so a drift where kimi rejects the
+            # `-c`/`--config` flag token itself is still attributed to the passthrough.
+            # The key is a config-path name (not a secret); the `-c` VALUE is never added.
+            descriptors += [flag, key]
+        else:  # profile / feature — the value is a non-secret NAME
+            if not value:
+                return ExtraArgs(configured=True, error=f"{flag} requires a non-empty value")
+            if kind == "feature" and value.strip().lower() in _PLUGIN_OWNED_FEATURES:
+                return ExtraArgs(
+                    configured=True,
+                    error=(
+                        f"feature '{value.strip()}' is managed by the plugin and cannot be set "
+                        f"via {EXTRA_ARGS_ENV} (enable or disable): it disables the remote_plugin "
+                        "connectors as a security guarantee (#287)"
+                    ),
+                )
+            tokens += [flag, value]
+            descriptors += [flag, value]
+        count += 1
+        i += 1
+    # De-dupe descriptors while preserving order (a stable, small match/echo set).
+    seen: dict[str, None] = {}
+    for d in descriptors:
+        seen.setdefault(d, None)
+    return ExtraArgs(
+        tokens=tuple(tokens),
+        descriptors=tuple(seen),
+        option_count=count,
+        configured=True,
+    )
+
+
+def extra_args() -> ExtraArgs:
+    """Resolve KIMI_IN_CLAUDE_EXTRA_ARGS. Blank/unset → an empty, valid ExtraArgs."""
+    raw = os.environ.get(EXTRA_ARGS_ENV)
+    if raw is None or not raw.strip():
+        return ExtraArgs()
+    return _parse_extra_args(raw)
+
+
+def clamp_timeout(value: int) -> int:
+    return max(MIN_TIMEOUT_SECONDS, min(MAX_TIMEOUT_SECONDS, value))
+
+
+def max_input_bytes() -> int:
+    return max(1_000, _env_int(f"{ENV_PREFIX}MAX_INPUT_BYTES", DEFAULT_MAX_INPUT_BYTES))
+
+
+def max_output_bytes() -> int:
+    return max(
+        64 * 1024,
+        _env_int(f"{ENV_PREFIX}MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES),
+    )
+
+
+def max_delegate_diff_bytes() -> int:
+    return max(
+        1_000,
+        _env_int(f"{ENV_PREFIX}MAX_DELEGATE_DIFF_BYTES", DEFAULT_MAX_DELEGATE_DIFF_BYTES),
+    )
+
+
+def git_timeout_seconds() -> int:
+    return max(1, _env_int(f"{ENV_PREFIX}GIT_TIMEOUT_SECONDS", DEFAULT_GIT_TIMEOUT_SECONDS))
+
+
+def job_ttl_seconds() -> int:
+    return max(60, _env_int(f"{ENV_PREFIX}JOB_TTL", DEFAULT_JOB_TTL_SECONDS))
+
+
+def job_max_seconds() -> int:
+    return max(60, min(7_200, _env_int(f"{ENV_PREFIX}JOB_MAX_SECONDS", DEFAULT_JOB_MAX_SECONDS)))
+
+
+def job_max_count() -> int:
+    return max(1, min(1_000, _env_int(f"{ENV_PREFIX}JOB_MAX_COUNT", DEFAULT_JOB_MAX_COUNT)))
+
+
+def job_store() -> JobStore:
+    """A JobStore wired to the resolved state dir and job knobs."""
+    return JobStore(
+        root=state_dir(),
+        ttl_seconds=job_ttl_seconds(),
+        max_seconds=job_max_seconds(),
+        max_count=job_max_count(),
+        cleanup_root=Path(tempfile.gettempdir()),
+        cleanup_prefix=worktree.WORKTREE_PREFIX,
+    )
+
+
+def sandbox_for_tier(tier: str) -> str:
+    """The default sandbox a tier runs under."""
+    return TIER_SANDBOX.get(tier, cli_contract.SANDBOX_READ_ONLY)
+
+
+def isolation_flags(isolation: str) -> list[str]:
+    """Kimi flags implementing an isolation level.
+
+    kimi realizes isolation through --skills-dir rather than standalone flags, so this
+    returns no tokens; use `skills_dir_for` to build the flag with its value. Kept so the
+    tier/isolation plumbing shared with the Codex-shaped orchestration keeps its shape.
+    """
+    if isolation not in VALID_ISOLATIONS:
+        raise ValueError(f"unsupported isolation: {isolation}")
+    return []
+
+
+def skills_dir_for(isolation: str) -> str | None:
+    """Directory for --skills-dir under `isolation`, or None to leave discovery alone.
+
+    'ignore-skills' points kimi at a stable empty directory, replacing the auto-discovered
+    user/project skill dirs. It does NOT suppress kimi's built-in skills — verified on
+    0.35.0 — so this reduces exposure rather than eliminating it.
+    """
+    if isolation != "ignore-skills":
+        return None
+    path = Path(state_dir()) / "empty-skills"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def supported_versions() -> frozenset[tuple[int, int]]:
+    """The `kimi` (major, minor) versions this server is built against.
+
+    Overridable via KIMI_IN_CLAUDE_SUPPORTED_VERSIONS (comma-separated
+    "major.minor"). Any parse error falls back to the built-in set."""
+    raw = os.environ.get(cli_contract.SUPPORTED_VERSIONS_ENV)
+    if not raw:
+        return cli_contract.SUPPORTED_VERSIONS
+    parsed: set[tuple[int, int]] = set()
+    for part in raw.split(","):
+        bits = part.strip().split(".")
+        if len(bits) < 2:
+            continue
+        try:
+            parsed.add((int(bits[0]), int(bits[1])))
+        except ValueError:
+            return cli_contract.SUPPORTED_VERSIONS
+    return frozenset(parsed) or cli_contract.SUPPORTED_VERSIONS
+
+
+def parse_version(version: str | None) -> tuple[int, int] | None:
+    """Extract (major, minor) from a `kimi --version` string, or None."""
+    if not version:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.\d+", version)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def version_supported(version: str | None) -> bool | None:
+    """Whether the installed kimi (major, minor) is in supported_versions().
+
+    Returns None when unparseable. Advisory only — kimi_status surfaces a mismatch
+    as a warning and never blocks calls on it."""
+    parsed = parse_version(version)
+    if parsed is None:
+        return None
+    return parsed in supported_versions()
+
+
+def log_level() -> str:
+    """Resolved diagnostic log level (an invalid value falls back to the default)."""
+    raw = os.environ.get(f"{ENV_PREFIX}LOG_LEVEL", DEFAULT_LOG_LEVEL).strip().upper()
+    return raw if raw in VALID_LOG_LEVELS else DEFAULT_LOG_LEVEL
+
+
+def log_file() -> str | None:
+    """Optional file path mirroring the stderr log, or None (stderr only)."""
+    value = os.environ.get(f"{ENV_PREFIX}LOG_FILE")
+    return value or None
+
+
+def state_dir() -> Path:
+    """Directory for disk-backed background job records."""
+    override = os.environ.get(f"{ENV_PREFIX}STATE_DIR")
+    if override:
+        return Path(override).expanduser()
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base).expanduser() if base else Path.home() / ".cache"
+    return root / "kimi-in-claude" / "jobs"
+
+
+def rate_limit_stale_seconds() -> int:
+    """Age (seconds) past which a cached snapshot is flagged is_stale. Advisory only —
+    the reset-aware interpretation, not this threshold, is the real staleness guard."""
+    raw = os.environ.get(f"{ENV_PREFIX}RATE_LIMIT_STALE_SECONDS")
+    if raw and raw.isdigit():
+        return int(raw)
+    return 1800  # 30 minutes
+
+
+def worktree_base() -> Path | None:
+    """Optional override for where temp worktrees are created (default: alongside
+    the repo, managed by git). None means let the worktree module choose."""
+    override = os.environ.get(f"{ENV_PREFIX}WORKTREE_BASE")
+    return Path(override).expanduser() if override else None

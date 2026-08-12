@@ -1,0 +1,267 @@
+# Reference
+
+Detailed contract for callers integrating with the MCP tools **directly**. Most users can skip
+this — Claude Code consumes these envelopes for you behind the `/kimi:*` slash commands. See the
+[README](../README.md) for installation and everyday use.
+
+## Result envelopes
+
+Every tool returns a discriminated envelope keyed by `ok`. The success shape depends on the tool:
+all of `kimi_consult`/`kimi_review_changes`/`kimi_delegate` carry `summary`/`findings`/`meta`,
+but the review-only `verdict`/`confidence`/`review_status`/`coverage` appear solely on
+`kimi_review_changes` and the proposed `diff` only on `kimi_delegate` — consult (Q&A) carries
+neither a verdict nor a diff. `review_status` distinguishes a completed review from one that never
+ran the model (nothing reviewable → `not_run`/`unknown`, never a false `pass`), and `coverage`
+discloses omitted untracked files, truncation, or redaction — downgrading a `pass` over partial
+coverage to `unknown`. `kimi_status`,
+`kimi_capabilities`, the `kimi_job_*` lifecycle tools, `kimi_dry_run`, and `kimi_delegate_dry_run`
+return their own documented shapes (branch on the tool, or on `ok`/`tool`/`status`, before reading
+fields). Failure is uniform: an `error` object built for machine-driven recovery, not just prose:
+
+- `code` — a stable error code from a fixed set (e.g. `invalid_arguments`, `job_running`,
+  `job_not_found`).
+- `message` — human-readable detail.
+- `temporary` + `retry_after_ms` — whether retrying can succeed and how long to back off
+  (`retry_after_ms` is always present; `null` unless `temporary` is true).
+- `repair` — `{next_step, tool, arguments, alternative}`: `next_step` is a stable SYMBOLIC
+  label you branch on (e.g. `poll_job_status`, `correct_arguments`); `tool`/`arguments` name a
+  tool to call to recover; `alternative` is prose fallback. Omitted only when no corrective
+  path exists.
+- `details` — `{field, fields, reason, allowed_values}`: `field` names a single offending input;
+  `fields` (mutually exclusive with `field`; non-empty, unique) names inputs whose *combination* is
+  invalid (e.g. a combined-size limit where no single input is at fault). The rejected `value` is
+  deliberately never echoed (it may be a secret).
+- `invalid_arguments` — set when `code` is `invalid_arguments`: a list of
+  `{field, reason, allowed_values}` per offending argument; `details` mirrors the first.
+- `limit_bytes`/`actual_bytes`/`candidate_roots` — size/roots context for the relevant codes.
+
+Absent optional fields are omitted from the payload (no placeholder nulls), except
+`retry_after_ms`. The full schema is published at the `kimi://error-envelope` resource.
+
+Success envelopes follow the same convention inside `meta`. On a delivered
+`kimi_consult`/`kimi_review_changes`/`kimi_delegate` success, optional `meta` members whose
+value is null are omitted entirely — a key's **absence** means exactly what an explicit null
+meant (not applicable, or not reported for this run). Read them with a null-safe accessor
+(`.get`), never by testing key presence. The six required members (`cwd`, `tier`, `sandbox`,
+`isolation`, `timeout_seconds`, `elapsed_ms`) are always present, and empty arrays stay empty
+arrays rather than disappearing.
+
+Everything *outside* `meta` is delivered verbatim: top-level fields keep their keys even when
+null — including `kimi_delegate`'s `diff`, which is null on a run that proposed no changes — and
+so does `raw_response`. The `*_async` job handle and `kimi_job_status` are **not** slimmed and
+still send their nulls. The stored `result.json` also keeps the full shape; this trimming happens
+on delivery, which is why a replayed job result and a fresh synchronous one look identical (see
+[ADR 0002](adr/0002-omit-null-meta-on-the-wire.md) for why the rule stops at `meta`).
+
+`kimi_capabilities` lists the error codes each tool may return (`error_codes`) as an advisory guide
+— useful for planning recovery, but not a closed contract. The envelope shape is versioned by
+`fingerprint`; clients can cache by it.
+
+### Fetching schemas without the inventory
+
+Prefer the `kimi://` resources for the full contracts.
+A **resource-blind** client that cannot read them can pass `include_schemas` to `kimi_capabilities`
+instead, which embeds the requested contracts in the response.
+
+That fallback returns the whole tool inventory alongside the schema, which a client that already
+cached the inventory pays for again on every fetch.
+Pass **`detail="contracts"`** to omit `tool_details` and get everything else unchanged — the
+schemas, `fingerprint`, `fingerprint_covers`, and the server identity fields:
+
+- `detail="contracts"` **with** `include_schemas` — fetch a contract without re-paying for the
+  inventory.
+- `detail="contracts"` **alone** — a cheap `fingerprint` recheck for cache revalidation.
+
+`tool_details` is the only field this drops; it is optional in the published schemas, so a
+`contracts` response still validates against both the tool's `outputSchema` and
+`kimi://capabilities-result`. Measured at `schema-62` on a representative payload, a schema
+fetch falls from 28,778 to 21,456 bytes and a bare call from 11,109 to 3,787 — indicative
+figures that move with the tool inventory, not a promised bound.
+
+`detail` is a single knob: `contracts` is an alternative to `summary`/`full`, not a modifier of
+them, so it carries no inventory to be verbose about.
+See [ADR 0003](adr/0003-fetch-schemas-without-the-inventory.md) for why this is a `detail` mode
+rather than a separate tool or a `schemas_only` flag.
+
+Every result envelope also carries `server_version` beside `fingerprint`. The two answer different
+questions and are not interchangeable:
+
+- `fingerprint` — **contract identity**: which agent-visible surface (tool/field shapes, error
+  codes, documented meaning) this result conforms to. A client cache key — bump it and a cached
+  client re-fetches the contract.
+- `server_version` — **release identity**: the installed `kimi-in-claude` package version attributed
+  to this result. Provenance, not a cache key — it lets a downstream consumer (an MCP error audit,
+  say) scope an analysis to a release instead of guessing from timestamps. It is a *package* version,
+  not a per-commit build id: an unreleased build reports the release it was cut from, so two runs
+  sharing a `server_version` may still differ in code (and, if the surface moved, in `fingerprint`).
+
+`server_version` is nullable. A **result** reply — a `done` job replaying its stored payload —
+reports the `server_version` of the run that **produced** it, never the version of the server
+replaying it: replaying never overwrites provenance with the replaying process's own identity. A
+job result persisted before this field existed replays with `server_version` **absent** (omitted,
+not backfilled), rather than being stamped with a plausible-but-wrong version.
+
+A job in a non-`done` terminal state (`failed`, `timeout`, `cancelled`) or not found has no stored
+payload to replay: the server synthesizes an error envelope for it, and that envelope's
+`server_version` is the **polling** server's own version, not any producing worker's — the job
+record persists no worker version, so there is nothing to preserve. A consumer reading synthesized
+error envelopes (an error audit, say) must attribute `server_version` on those envelopes to whichever
+server answered the poll, not to the run that failed.
+
+**Read version fields by exact key, never by pattern.** Two tools carry version-ish keys, and they
+do not name the same software. `kimi_capabilities` returns `version` and `server_version` — both
+*this* server's installed package version. `kimi_status` returns `server_version` for this server
+and `kimi_version` for the **Kimi CLI** — the external binary this server shells out to (its
+companion `version_supported` is a boolean about that CLI, not about this server). Match the exact
+key you mean; pattern-matching key names containing "version" risks reading the wrong software's
+version.
+
+Secret-looking values are redacted from every free-text surface before it leaves the plugin —
+`summary`, `findings`/`questions`/`assumptions`/`next_steps`, and `raw_response.text` — in addition
+to gathered diffs. Inline matches are replaced with `[redacted: secret value]` when nothing about
+the match's neighboring characters gives an affirmative sign it stopped short — not a claim the
+replaced span is provably complete, which this best-effort mechanism cannot make — or with
+`[redacted: possibly partial secret value]` when it finds such a sign: a trailing character the
+matched text's own alphabet could not have produced (the value may continue past the marker), or a
+leading character that could continue the same token (the match may have started mid-token).
+Neither marker is a guarantee in either direction: a free-form secret can contain almost any
+character, so the checks deliberately do not flag every unusual neighbor — doing so would fire on
+nearly every redaction and stop being a useful signal. This is **best-effort
+defense-in-depth, not a guarantee**: it covers content the plugin itself surfaces, not whatever Kimi
+may read or act on during a run. The schema is unchanged; the inline marker is the only signal.
+
+For a gathered diff specifically, `kimi_review_changes`/`kimi_dry_run`'s `coverage.redaction`
+breaks the `redacted` omission reason down further when a structured breakdown is available:
+`withheld_paths` names files whose hunk was dropped whole, `masked_paths` names files sent with
+inline values replaced, and `inline_masks` counts the markers actually emitted. The reason CAN fire
+with no breakdown — a legacy-shaped producer, or a disclosure dropped entirely by byte-cap
+truncation — but `redaction` is never non-null without the reason also firing (enforced).
+`meta.redacted_paths` stays the flat, backward-compatible union of both path lists.
+
+### Detail levels
+
+`kimi_consult`, `kimi_review_changes`, `kimi_delegate`, and async result retrieval
+(`kimi_job_result`, `kimi_job_consume_result`) take a `detail` parameter:
+
+- `detail="summary"` (**default**) — omits the raw model text (`raw_response.text`), which usually
+  duplicates content already in `summary`/`findings`/`diff`. The structured fields remain
+  authoritative, and the parser shape is unchanged: `raw_response` is still present with `text` set to
+  `null` (its `session_id`/`model` — also in `meta` — are kept).
+- `detail="full"` — includes the complete raw model output for diagnostics.
+
+At the MCP call boundary an unrecognized value is rejected as `invalid_arguments` before the tool
+handler runs, with `details.allowed_values` listing the accepted values. For async work the worker
+always stores the full envelope, so a later `kimi_job_result(..., detail="full")` can still recover
+the raw text.
+
+## Idempotency
+
+The six spend-committing tools — `kimi_consult`, `kimi_review_changes`, `kimi_delegate` and their
+`_async` variants — take an optional `idempotency_key`. Reusing a key on the **same tool** with the
+same arguments replays the existing run instead of starting (and paying for) a duplicate Kimi call:
+a sync call reattaches to the in-flight run and returns its result; an `_async` call returns the same
+`job_id`. The key is scoped to the concrete tool — the sync and `_async` variants are different tools
+and never share a key's run (see ADR 0001 for why they are separate tools). Reuse with different arguments (including a different `timeout_seconds`)
+is refused with `idempotency_conflict`; a key whose prior result was already consumed/evicted is
+`idempotency_result_unavailable`; a still-publishing reservation is `idempotency_in_progress`
+(retryable). Omit the key for the prior no-dedup behavior.
+
+- `meta.idempotency_replayed` — `true` only on a replayed response, marking that no new Kimi spend
+  occurred; omitted otherwise.
+- `meta.job_kind` — set on a lifecycle (`kimi_job_*`) error envelope when it resolved an existing
+  job record, naming that job's kind (e.g. `kimi_delegate`); omitted for not-found/pre-lookup errors.
+
+## Background jobs
+
+The `kimi_job_*` lifecycle tools manage detached runs started by the `_async` tools (and the job
+records that sync runs also create). Operational semantics:
+
+- **Backoff.** Every polling response carries `poll_after_ms`; honor it rather than polling in a
+  tight loop. It grows with a running job's elapsed runtime (bounded), so you back off
+  automatically on long runs.
+- **Deadline.** A job is bounded by a wall-clock cap (`KIMI_IN_CLAUDE_JOB_MAX_SECONDS`); a poll
+  past the deadline reaps the job.
+- **Retention.** Results are retained `ttl_seconds` **after** a job completes, so `expires_at` is
+  `null` while it runs and is set once it finishes. Records are also evicted oldest-terminal-first
+  past a per-workspace count cap (`KIMI_IN_CLAUDE_JOB_MAX_COUNT`).
+- **`server_version` provenance.** Only a *replayed* payload carries the producing run's version;
+  every freshly built envelope carries the responding server's. For a `done` job, a
+  `kimi_job_result`/`kimi_job_consume_result` reply replays the stored payload and carries the
+  `server_version` of the run that *produced* it, not the version of the server currently serving the
+  poll — replaying never re-stamps provenance. A result from a job persisted before this field existed
+  replays with `server_version` absent. Everything else is freshly constructed and therefore reports
+  the *responding* server: `kimi_job_status`, `kimi_job_list`, and a successful `kimi_job_cancel`,
+  plus the synthesized error envelope for a job in another terminal state (`failed`, `timeout`,
+  `cancelled`) or not found — those have no stored payload to preserve. See Result envelopes above.
+
+## Rate-limit reporting
+
+`kimi_status` reads the current quota **live** from the Kimi app-server
+(`account/rateLimits/read`, `source: app_server_live`) — a read-only call with no model-token
+spend and nothing persisted. Windows are classified by duration: `primary` is the shorter/rolling
+window, `secondary` the longer one; the account reports only the windows that currently bind it, so
+either may be null. `status` is `available`/`limited`/`exhausted`/`unknown` (the live read could not
+complete, or kimi is not ready — retry) / `unavailable` (this kimi/account exposes no quota data).
+On kimi 0.144+ the quota block no longer rides the `kimi exec` stream, so a run's `meta.rate_limit`
+is absent (see [Result envelopes](#result-envelopes) — null optionals are omitted from a delivered
+success `meta`). The block is advisory.
+
+`status` is also `blocked` when the backend reports a **spend** control — kimi 0.145+ carries
+`spendControlReached`, surfaced as `spend_control_reached`. It is not a quota window: no reset
+clears it, so `blocked` outranks every window verdict and reports `limiting_window: null` while
+still showing the windows. The field is tri-state, and null is *not* false: a kimi/backend that
+does not report the state leaves it null, and the window verdicts stay window-scoped — `available`
+attests that the reported windows are healthy, never that spending is administratively permitted.
+When the state is unreported and the windows are healthy, `note` says so.
+
+## Workspace selection
+
+When calling the MCP tools directly, pass `workspace_root` as an absolute path to the repository you
+want Kimi to inspect or edit. Claude Code usually supplies the current repo as an MCP root for slash
+commands; if neither an MCP root nor `workspace_root` is available, the server may fall back to its
+own launch directory and return `meta.workspace_warning`.
+
+`meta.roots_source` reports what the MCP-roots probe saw, which is a different axis from
+`workspace_source` below: `client` (the client advertised the roots capability and the probe
+returned, possibly an empty list), `not_negotiated` (the client never advertised the capability —
+pass `workspace_root` instead), or `probe_failed` (roots were advertised but the probe errored this
+turn — retrying may help). It separates a client limitation from a transient failure, which a bare
+empty list cannot. It does **not** say where the workspace came from: `workspace_source` answers
+that, and `roots_source: "client"` coexists with `workspace_source: "param"` (an explicit
+`workspace_root` wins over roots) or `"cwd"` (the probe returned no usable root).
+
+On a **successful** preview, `kimi_dry_run` and `kimi_delegate_dry_run` expose the same value as a
+**top-level** `roots_source` rather than under `meta`; when their error envelopes report it at all it
+sits under `meta` like every other tool, and an argument rejected at the call boundary carries none
+because no roots probe has run yet. Which run it describes depends on the envelope: a delivered
+`kimi_consult`/`kimi_review_changes`/`kimi_delegate` result — returned synchronously or fetched
+later via `kimi_job_result`/`kimi_job_consume_result` — reports the **originating** run, like
+`tier`, while an `*_async` job handle (including an idempotency replay handle), a dry-run preview,
+and an error a `kimi_job_*` call generates instead of delivering a stored result each report the
+**current** call. So a replay handle and the result later fetched for that same job may legitimately
+differ. A missing key means only that the value was not reported (see
+[Result envelopes](#result-envelopes) for the null-omission rule) — never infer a run's age or
+identity from its absence. The exhaustive per-envelope matrix ships with the field itself at
+`kimi://result-meta`.
+
+Both dry runs also carry `deadline_advisory`: non-null when the previewed paid call's prompt size or
+reasoning effort risks the synchronous deadline, naming — verbatim, so it is directly callable — the
+**previewed paid tool's own** `_async` counterpart: `kimi_review_changes_async` from `kimi_dry_run`,
+`kimi_delegate_async` from `kimi_delegate_dry_run`. Never the dry-run tool's own name, which has no
+`_async` variant (there is no `kimi_dry_run_async`) — an earlier draft of this field used a generic
+"this tool's `_async` variant" phrase that, read from the dry-run caller's own perspective, pointed at
+that nonexistent tool; a Kimi review caught it before release. It is a hint, not a refusal —
+`would_call_model` and every other field are unaffected — and it is unconditionally null whenever
+`would_call_model` (`kimi_dry_run`) or the delegate preview's equivalent would-call fact is false: a
+call that runs no model cannot overrun a deadline it never approaches. `kimi_consult` has no dry-run
+preview at all; for a high-effort or broad repo-grounded consult, prefer `kimi_consult_async` directly.
+
+The job-lifecycle tools (`kimi_job_status`, `kimi_job_list`, `kimi_job_cancel`) carry the resolved
+workspace on **successful** responses too — a compact `workspace` object with `cwd`,
+`workspace_source` (`param`/`roots`/`cwd`), and `workspace_warning` (set on a cwd fallback). Because
+jobs are scoped per workspace, this lets you confirm which repository a poll or list targeted instead
+of mistaking a wrong-workspace lookup for an empty list or `job_not_found`. (Error responses already
+carry the same context via `meta`.)
+
+Review and delegate operations need a git repository. `kimi_delegate` also requires at least one
+commit so it can create the temporary worktree.

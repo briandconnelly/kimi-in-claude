@@ -1,0 +1,476 @@
+"""Build and run the `kimi` CLI invocation; probe version/providers; classify failures.
+
+Shape mirrors the Codex adapter this project forked from, but the mechanics differ — see
+cli_contract for the three differences that drive everything (no sandbox, argv-only prompt,
+no --output-last-message).
+
+The two guarantees this module is responsible for:
+
+* **Read-only tiers really are read-only.** A read-only run is given an --agent-file whose
+  `tools:` list omits Bash and Write. That file is generated per run and is the ONLY thing
+  standing between a consult and an unrestricted agent — the worktree is not a boundary
+  (see cli_contract). `build_exec_command` therefore refuses to build a read-only command
+  without it rather than silently emitting an unrestricted one.
+* **Gathered context never rides argv.** The prompt is written into the worktree and argv
+  carries a short pointer, because kimi ignores stdin and crashes past ~950k argv chars.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from kimi_in_claude import cli_contract, config, normalize, preflight
+from kimi_in_claude._core import redaction, runtime
+from kimi_in_claude.errors import make_error
+from kimi_in_claude.schemas import ErrorDetail
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from kimi_in_claude._core.runtime import CommandRun
+    from kimi_in_claude.preflight import FlagSupport
+    from kimi_in_claude.schemas import ErrorInfo, Meta
+
+
+@dataclass
+class KimiRunResult:
+    """Outcome of a `kimi -p` run: the raw process result plus the extracted final
+    assistant message and the stream-json event text (for tolerant metadata parsing)."""
+
+    run: CommandRun
+    last_message: str | None
+    events: str = ""
+    dropped_flags: list[str] = field(default_factory=list)
+
+
+def _gate_optional(tokens: list[str], fs: FlagSupport) -> tuple[list[str], list[str]]:
+    """Drop any HELP_GATED flag (and its value) the installed `kimi` does not advertise.
+
+    Returns (kept_tokens, dropped_flags). ALWAYS_SEND flags are never in HELP_GATED_FLAGS,
+    so they always survive and a rejection surfaces as cli_contract_changed.
+    """
+    kept: list[str] = []
+    dropped: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        takes_value = cli_contract.HELP_GATED_FLAGS.get(token)
+        if takes_value is not None and not preflight.is_supported(token, fs):
+            dropped.append(token)
+            i += 2 if takes_value else 1
+            continue
+        kept.append(token)
+        i += 1
+    return kept, dropped
+
+
+def reconcile_dropped_model(result: KimiRunResult, meta: Meta) -> None:
+    """Reset meta.model when -m was dropped by help-gating, so reported provenance matches
+    the model actually used rather than the unfulfilled request. The drop is already
+    surfaced in meta.compat_warnings."""
+    if cli_contract.MODEL_FLAG in result.dropped_flags:
+        meta.model = None
+
+
+def read_only_agent_document() -> str:
+    """The generated agent profile that makes a run read-only.
+
+    Its `tools:` list is guarantee-bearing (cli_contract.READ_ONLY_AGENT_TOOLS): Bash and
+    Write are absent, so the model has no way to mutate anything. Verified on kimi-code
+    0.35.0 — an agent declaring these three reported exactly these three.
+    """
+    tools = "\n".join(f"  - {t}" for t in cli_contract.READ_ONLY_AGENT_TOOLS)
+    return (
+        "---\n"
+        f"name: {cli_contract.READ_ONLY_AGENT_NAME}\n"
+        "description: Read-only consultant with no shell or write tools.\n"
+        "tools:\n"
+        f"{tools}\n"
+        "---\n"
+        "You are a read-only consultant. Answer using only the tools you have. "
+        "You cannot modify files, and you must not ask for permission to do so.\n"
+    )
+
+
+def build_exec_command(
+    *,
+    cwd: str,
+    sandbox: str,
+    isolation: str,
+    prompt_pointer: str,
+    model: str | None = None,
+    agent_file_path: str | None = None,
+    skills_dir: str | None = None,
+    extra_args: tuple[str, ...] = (),
+    flag_support: FlagSupport | None = None,
+) -> tuple[list[str], list[str]]:
+    """Build the `kimi -p` invocation. Returns (cmd, dropped_optional_flags).
+
+    `prompt_pointer` is the SHORT argv prompt — typically an instruction to read the
+    handshake prompt file. Gathered context must never be inlined here: kimi ignores stdin
+    and dies with a Node RangeError past ~950k argv chars, so the caller writes the real
+    prompt to a file inside the worktree.
+
+    `agent_file_path` is REQUIRED when sandbox is read-only. Without it the run would hold
+    the full tool set, and since the worktree is not a boundary that would silently turn a
+    read-only consult into an unrestricted agent — so this raises rather than degrades.
+    """
+    if sandbox == cli_contract.SANDBOX_READ_ONLY and not agent_file_path:
+        raise ValueError(
+            "read-only runs require an agent file: the tools allowlist is the only thing "
+            "enforcing read-only, and a worktree does not contain kimi"
+        )
+    if len(prompt_pointer) > cli_contract.MAX_ARGV_PROMPT_CHARS:
+        raise ValueError(
+            f"argv prompt exceeds {cli_contract.MAX_ARGV_PROMPT_CHARS} chars; "
+            "write it to the handshake prompt file instead"
+        )
+
+    # cwd is not a kimi flag (there is no --cd); the caller sets it on the subprocess.
+    # Accepted here so the command builder and the runner agree on one call shape.
+    _ = cwd
+    fs = flag_support if flag_support is not None else preflight.flag_support()
+    tokens = [cli_contract.KIMI_BIN, *cli_contract.EXEC_SUBCOMMAND]
+    tokens += [cli_contract.PROMPT_FLAG, prompt_pointer]
+    tokens += [cli_contract.OUTPUT_FORMAT_FLAG, cli_contract.OUTPUT_FORMAT_JSON]
+    if agent_file_path:
+        tokens += [cli_contract.AGENT_FILE_FLAG, agent_file_path]
+    if skills_dir:
+        tokens += [cli_contract.SKILLS_DIR_FLAG, skills_dir]
+    if model:
+        tokens += [cli_contract.MODEL_FLAG, model]
+    # Deliberately never sent: --add-dir (would defeat worktree isolation) and the
+    # prompt-mode-incompatible flags (-y/--auto/--plan/--session/--continue), which kimi
+    # rejects outright. isolation is realized by skills_dir + the agent file, not by flags
+    # of its own — kimi has no --ignore-user-config equivalent.
+    _ = isolation
+    cmd, dropped = _gate_optional(tokens, fs)
+    cmd += list(extra_args)
+    return cmd, dropped
+
+
+def build_run_env(reasoning_effort: str | None) -> dict[str, str]:
+    """Child environment for a run.
+
+    Reasoning effort rides an env var (kimi has no flag for it), so it is set here rather
+    than in argv. Everything else is inherited: the provider credentials in the user's
+    config are what authenticate the run.
+    """
+    env = dict(os.environ)
+    if reasoning_effort is not None:
+        env[cli_contract.REASONING_EFFORT_ENV] = reasoning_effort
+    # Pin the output format so a user's KIMI_MODEL_OUTPUT_FORMAT=text cannot silently
+    # strip the event stream out from under the parser.
+    env[cli_contract.MODEL_OUTPUT_FORMAT_ENV] = cli_contract.OUTPUT_FORMAT_JSON
+    return env
+
+
+def write_handshake(run_dir: str, prompt_text: str, *, read_only: bool) -> dict[str, str]:
+    """Write the per-run handshake files into `run_dir` and return their paths.
+
+    Returns keys: prompt (always), answer (propose tier only), agent (read-only tier only).
+    The answer file is only meaningful when the run has a Write tool, so it is not offered
+    to a read-only run — that tier recovers its answer from the event stream instead.
+    """
+    base = Path(run_dir) / cli_contract.HANDSHAKE_DIR_NAME
+    base.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, str] = {}
+
+    prompt_path = base / cli_contract.PROMPT_FILE_NAME
+    prompt_path.write_text(prompt_text, encoding="utf-8")
+    paths["prompt"] = str(prompt_path)
+
+    if read_only:
+        agent_path = base / "readonly-agent.md"
+        agent_path.write_text(read_only_agent_document(), encoding="utf-8")
+        paths["agent"] = str(agent_path)
+    else:
+        paths["answer"] = str(base / cli_contract.ANSWER_FILE_NAME)
+    return paths
+
+
+def build_prompt_pointer(*, read_only: bool) -> str:
+    """The short argv prompt pointing kimi at the handshake files."""
+    rel = f"{cli_contract.HANDSHAKE_DIR_NAME}/{cli_contract.PROMPT_FILE_NAME}"
+    if read_only:
+        return f"Read {rel} and follow it exactly. Reply with your answer as your final message."
+    answer = f"{cli_contract.HANDSHAKE_DIR_NAME}/{cli_contract.ANSWER_FILE_NAME}"
+    return (
+        f"Read {rel} and follow it exactly. When you are done, write your final answer to {answer}."
+    )
+
+
+async def run_kimi_exec(
+    prompt: str,
+    *,
+    cwd: str,
+    sandbox: str,
+    isolation: str,
+    timeout_seconds: int,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    output_schema: dict | None = None,
+    add_dirs: tuple[str, ...] = (),
+    skip_git_repo_check: bool = False,
+    ephemeral: bool = True,
+    flag_support: FlagSupport | None = None,
+    on_event: Callable[[str], None] | None = None,
+) -> KimiRunResult:
+    """Run `kimi -p` in `cwd`, managing the handshake files.
+
+    `cwd` MUST already be an isolated worktree: every tier runs in one, because kimi has no
+    sandbox. `output_schema`, when given, is appended to the prompt as an instruction —
+    kimi has no --output-schema flag, so structured output is prompt-requested and parsed
+    tolerantly downstream (normalize.parse_structured), never assumed.
+
+    `add_dirs`, `skip_git_repo_check`, and `ephemeral` are accepted for call-site
+    compatibility with the Codex-shaped orchestration and are intentionally unused: kimi
+    has no equivalent flags, and --add-dir would defeat worktree isolation.
+    """
+    _ = (add_dirs, skip_git_repo_check, ephemeral)
+    read_only = sandbox == cli_contract.SANDBOX_READ_ONLY
+
+    prompt_text = prompt
+    if output_schema is not None:
+        prompt_text += (
+            "\n\n# Required output format\n"
+            "Reply with a single JSON object and nothing else — no prose, no code fence. "
+            "It must validate against this JSON Schema:\n\n"
+            f"{json.dumps(output_schema, indent=2)}\n"
+        )
+
+    paths = write_handshake(cwd, prompt_text, read_only=read_only)
+    cmd, dropped = build_exec_command(
+        cwd=cwd,
+        sandbox=sandbox,
+        isolation=isolation,
+        prompt_pointer=build_prompt_pointer(read_only=read_only),
+        model=model,
+        agent_file_path=paths.get("agent"),
+        skills_dir=config.skills_dir_for(isolation),
+        extra_args=config.extra_args().tokens,
+        flag_support=flag_support,
+    )
+    run = await runtime.run_async(
+        cmd,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        stdin_text=None,
+        on_stdout_line=on_event,
+        max_output_bytes=config.max_output_bytes(),
+        env=build_run_env(reasoning_effort),
+    )
+    last_message = _resolve_answer(paths.get("answer"), run.stdout)
+    return KimiRunResult(
+        run=run, last_message=last_message, events=run.stdout, dropped_flags=dropped
+    )
+
+
+def _resolve_answer(answer_path: str | None, events: str) -> str | None:
+    """Recover the final answer: answer file first (propose tier), event stream otherwise.
+
+    kimi has no --output-last-message, so for a read-only run the stream is the only
+    channel. Returning None makes the caller fail loudly rather than report an empty
+    success.
+    """
+    if answer_path:
+        try:
+            text = Path(answer_path).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            text = ""
+        if text:
+            return text
+    return normalize.extract_final_message(events)
+
+
+def kimi_version(timeout_seconds: int = 10) -> str | None:
+    """Probe `kimi --version`. Returns the trimmed version string, or None."""
+    run = runtime.run_sync_capture(
+        [cli_contract.KIMI_BIN, *cli_contract.VERSION_ARGS], timeout_seconds=timeout_seconds
+    )
+    if run.binary_missing or run.exit_code != 0:
+        return None
+    return run.stdout.strip() or None
+
+
+def login_status(timeout_seconds: int = 10) -> tuple[bool | None, str | None]:
+    """Probe provider configuration without a model call.
+
+    kimi has no `login status`. Readiness is instead "at least one provider is configured",
+    read from `kimi provider list --json`. Returns (configured, detail); configured is None
+    when the probe could not run.
+
+    The detail is NON-identifying and derived only from the provider COUNT — never the raw
+    output, which carries base URLs and may carry an API key.
+    """
+    run = runtime.run_sync_capture(
+        [cli_contract.KIMI_BIN, *cli_contract.PROVIDER_LIST_ARGS],
+        timeout_seconds=timeout_seconds,
+    )
+    if run.binary_missing or run.timed_out:
+        return None, None
+    if run.exit_code != 0:
+        return False, "Kimi reports no usable provider configuration; run `kimi login`."
+    count = _provider_count(run.stdout)
+    if count is None:
+        # Parsed nothing: report indeterminate rather than claiming either way.
+        return None, None
+    if count == 0:
+        return False, "Kimi has no configured provider; run `kimi login`."
+    return True, f"Kimi reports {count} configured provider(s)."
+
+
+def _provider_count(stdout: str) -> int | None:
+    """Count configured providers from `kimi provider list --json`, tolerantly.
+
+    Never returns any provider detail — base URLs and API keys live in that payload.
+    """
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        for key in ("providers", "items", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return len(value)
+            if isinstance(value, dict):
+                return len(value)
+    return None
+
+
+def _auth_error() -> ErrorInfo:
+    return make_error("kimi_auth_required", "kimi is not authenticated.")
+
+
+def _rate_limit_error(retry_after_ms: int) -> ErrorInfo:
+    return make_error(
+        "kimi_rate_limited", "kimi hit a usage/rate limit.", retry_after_ms=retry_after_ms
+    )
+
+
+def contract_changed_error() -> ErrorInfo:
+    """Shared cli_contract_changed error, reused across every failure path so a drift is
+    reported identically wherever `kimi` surfaces it."""
+    return make_error(
+        "cli_contract_changed",
+        "kimi rejected a flag or value this plugin sent — its CLI "
+        "contract likely changed for your installed version.",
+    )
+
+
+def _invalid_model_error() -> ErrorInfo:
+    """Error for a model alias absent from the user's config.toml.
+
+    Value-free by policy: the rejected alias is caller input, which the caller already holds.
+    """
+    return make_error(
+        "invalid_model",
+        "Kimi does not have that model alias configured. `-m` takes an alias defined in "
+        "config.toml, not a raw provider model id.",
+        details=ErrorDetail(field="model"),
+    )
+
+
+def _invalid_reasoning_effort_error() -> ErrorInfo:
+    return make_error(
+        "invalid_reasoning_effort",
+        "The Kimi backend rejected the requested reasoning_effort for this model.",
+        details=ErrorDetail(field="reasoning_effort"),
+    )
+
+
+def _extra_args_rejected_error(matched: list[str]) -> ErrorInfo:
+    named = ", ".join(matched) if matched else config.EXTRA_ARGS_ENV
+    return make_error(
+        "extra_args_rejected",
+        f"kimi rejected an argument from {config.EXTRA_ARGS_ENV} ({named}).",
+        repair_alternative=(
+            f"Fix or remove the offending entry ({named}) in {config.EXTRA_ARGS_ENV}; "
+            "this is operator config, NOT a plugin contract drift. Verify the option "
+            "against `kimi --help` for your installed version."
+        ),
+    )
+
+
+def classify_failure(
+    run: CommandRun,
+    *,
+    last_message: str | None = None,
+    events: str | None = None,
+    extra_args: config.ExtraArgs | None = None,
+    reasoning_effort: str | None = None,
+    sanitize: Callable[[str], str] | None = None,
+) -> ErrorInfo:
+    """Classify a non-success `kimi -p` run into a recoverable ErrorInfo.
+
+    Ordering is deliberate and mirrors the Codex adapter: drift is checked BEFORE rate
+    limiting so a genuine contract change is never masked as a retryable transient.
+
+    The invalid-model branch sits ahead of generic drift because kimi reports an unknown
+    -m alias with a message that also trips the drift patterns, and that failure is the
+    caller's argument, not an upstream change.
+    """
+    if run.binary_missing:
+        return make_error("kimi_not_found", "The `kimi` CLI was not found on PATH.")
+    if run.timed_out:
+        return make_error("timeout", "kimi exceeded the timeout.")
+    event_error = normalize.extract_error_message(events) if events else None
+    if cli_contract.is_invalid_model(run.stderr, run.stdout, last_message, event_error):
+        return _invalid_model_error()
+    if cli_contract.is_auth_failure(run.stderr, run.stdout, last_message, event_error):
+        return _auth_error()
+    if cli_contract.is_contract_drift(run.stderr, run.stdout, event_error):
+        matched = _extra_args_drift_match(extra_args, run.stderr, run.stdout, event_error)
+        if reasoning_effort is not None and cli_contract.is_reasoning_effort_rejection(
+            run.stderr, run.stdout, event_error
+        ):
+            return _invalid_reasoning_effort_error()
+        if matched is not None:
+            return _extra_args_rejected_error(matched)
+        return contract_changed_error()
+    if cli_contract.is_rate_limited(run.stderr, run.stdout, last_message, event_error):
+        retry_after = cli_contract.parse_retry_after_ms(
+            run.stderr, run.stdout, last_message, event_error
+        )
+        # Explicit None check: a parsed "retry after 0" is a valid delay (retry now) and
+        # must survive rather than being coalesced to the default by a falsey test.
+        if retry_after is None:
+            retry_after = cli_contract.RATE_LIMIT_DEFAULT_BACKOFF_MS
+        return _rate_limit_error(retry_after)
+    # Sanitize (or redact) the full text BEFORE truncating: a secret or worktree path
+    # straddling the cut would otherwise lose the tail the patterns need, leaking a prefix.
+    raw = (event_error or run.stderr or run.stdout).strip()
+    detail = (sanitize(raw) if sanitize is not None else (redaction.redact_text(raw) or ""))[:300]
+    return make_error("nonzero_exit", f"kimi exited {run.exit_code}: {detail}")
+
+
+def _descriptor_in_blob(descriptor: str, blob: str) -> bool:
+    """Whether `descriptor` appears in `blob` at flag/token boundaries.
+
+    A bare substring test is too loose: a short descriptor would match inside an unrelated
+    word, misattributing a genuine plugin-flag drift to the operator's passthrough.
+    """
+    pattern = rf"(?<![\w-]){re.escape(descriptor)}(?![\w-])"
+    return re.search(pattern, blob, re.IGNORECASE) is not None
+
+
+def _extra_args_drift_match(extra: config.ExtraArgs | None, *texts: str | None) -> list[str] | None:
+    """Descriptors of `extra` that kimi named in a rejection blob, or None.
+
+    Returns None when no extra args are configured/valid, so a genuine plugin-flag drift
+    stays cli_contract_changed and the fail-loud guarantee holds.
+    """
+    ea = config.extra_args() if extra is None else extra
+    if not ea.configured or not ea.valid or not ea.descriptors:
+        return None
+    blob = "\n".join(t for t in texts if t)
+    matched = [d for d in ea.descriptors if _descriptor_in_blob(d, blob)]
+    return matched or None
