@@ -384,14 +384,6 @@ def _invalid_model_error() -> ErrorInfo:
     )
 
 
-def _invalid_reasoning_effort_error() -> ErrorInfo:
-    return make_error(
-        "invalid_reasoning_effort",
-        "The Kimi backend rejected the requested reasoning_effort for this model.",
-        details=ErrorDetail(field="reasoning_effort"),
-    )
-
-
 def _extra_args_rejected_error(matched: list[str]) -> ErrorInfo:
     named = ", ".join(matched) if matched else config.EXTRA_ARGS_ENV
     return make_error(
@@ -422,11 +414,22 @@ def classify_failure(
     The invalid-model branch sits ahead of generic drift because kimi reports an unknown
     -m alias with a message that also trips the drift patterns, and that failure is the
     caller's argument, not an upstream change.
+
+    There is deliberately NO backend reasoning-effort branch here, unlike the Codex
+    adapter. Verified on kimi-code 0.35.0: kimi silently IGNORES an unrecognized
+    KIMI_MODEL_THINKING_EFFORT and exits 0, so a rejection never reaches this function.
+    A branch for it would be dead code advertising a check that never runs; the effort is
+    validated locally before spend instead (server._reasoning_effort_unsupported_error).
+    `reasoning_effort` is still accepted so call sites keep one shape, and is used only to
+    attribute an operator passthrough below.
     """
     if run.binary_missing:
         return make_error("kimi_not_found", "The `kimi` CLI was not found on PATH.")
     if run.timed_out:
         return make_error("timeout", "kimi exceeded the timeout.")
+    # Accepted for call-site uniformity; see the docstring on why kimi has no backend
+    # effort rejection to classify.
+    _ = reasoning_effort
     event_error = normalize.extract_error_message(events) if events else None
     if cli_contract.is_invalid_model(run.stderr, run.stdout, last_message, event_error):
         return _invalid_model_error()
@@ -434,10 +437,6 @@ def classify_failure(
         return _auth_error()
     if cli_contract.is_contract_drift(run.stderr, run.stdout, event_error):
         matched = _extra_args_drift_match(extra_args, run.stderr, run.stdout, event_error)
-        if reasoning_effort is not None and cli_contract.is_reasoning_effort_rejection(
-            run.stderr, run.stdout, event_error
-        ):
-            return _invalid_reasoning_effort_error()
         if matched is not None:
             return _extra_args_rejected_error(matched)
         return contract_changed_error()

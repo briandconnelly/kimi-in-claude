@@ -25,3 +25,16 @@ grace, SIGKILL -> only then `worktree.remove()` (a live writer would otherwise r
 - stdout is clean JSONL; stderr carries raw tool output and thinking. Confirmed.
 - `tool_call_id` is NOT unique per run — "Read:0" appeared twice in one session. Parsers must not key on it.
 - `system.version` line is emitted on stdout even on a fatal error.
+
+## M0-6 (run 2026-08-12): reasoning effort is NOT validated
+
+`KIMI_MODEL_THINKING_EFFORT=bogus-effort kimi -p "..."` exits **0** and answers normally.
+kimi silently ignores an unrecognized effort rather than rejecting it.
+
+Consequences:
+- `invalid_reasoning_effort` is unreachable from a backend rejection; a classifier branch
+  for it would be dead code that claims a check it never performs.
+- Reporting the requested effort in `meta.reasoning_effort` without validating it would be
+  a lie: the run may have used the model's default.
+- Validation must therefore be LOCAL and pre-spend, against the model's `support_efforts`
+  from `kimi provider list --json`.

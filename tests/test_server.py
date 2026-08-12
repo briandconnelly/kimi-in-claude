@@ -13,7 +13,7 @@ import pytest
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from pydantic import ValidationError
 
-from kimi_in_claude import __version__, cli_contract, kimi, delegate, orchestration, server
+from kimi_in_claude import __version__, cli_contract, delegate, kimi, orchestration, server
 from kimi_in_claude._core.jobs import DiscardOutcome
 from kimi_in_claude._core.runtime import CommandRun
 from kimi_in_claude.schemas import (
@@ -607,8 +607,7 @@ _REQUIRED_GUARANTEES = {
     "kimi_review_changes": _COMMON_EGRESS
     | {"isolation_suppress", "redaction_best_effort", "diff_redacted"},
     "kimi_review_changes_async": _COMMON_EGRESS | {"redaction_best_effort", "diff_redacted"},
-    "kimi_delegate": _COMMON_EGRESS
-    | {"isolation_suppress", "redaction_best_effort", "no_network"},
+    "kimi_delegate": _COMMON_EGRESS | {"isolation_suppress", "redaction_best_effort", "no_network"},
     "kimi_delegate_async": _COMMON_EGRESS | {"redaction_best_effort", "no_network"},
 }
 
@@ -2589,9 +2588,7 @@ async def test_job_result_detail_controls_raw_text(monkeypatch, clean_env, tmp_p
 async def test_consult_async_returns_job_id(monkeypatch, clean_env, tmp_path):
     store = _FakeStore()
     monkeypatch.setattr(server.config, "job_store", lambda: store)
-    res = await server.kimi_consult_async(
-        "why?", workspace_root=str(tmp_path), extra_context="ctx"
-    )
+    res = await server.kimi_consult_async("why?", workspace_root=str(tmp_path), extra_context="ctx")
     assert res["ok"] is True
     assert res["job_id"] == "job-abc"
     assert res["kind"] == "kimi_consult"
@@ -5676,9 +5673,7 @@ async def test_await_job_result_status_disappears_is_internal_error(
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     cwd = str(tmp_path)
     meta = _await_job_result_meta(cwd)
-    res = await server._await_job_result(
-        cwd, "job-abc", "kimi_consult", meta, "summary", 180, None
-    )
+    res = await server._await_job_result(cwd, "job-abc", "kimi_consult", meta, "summary", 180, None)
     assert res["ok"] is False
     assert res["error"]["code"] == "internal_error"
 
@@ -5693,9 +5688,7 @@ async def test_await_job_result_missing_result_payload_is_internal_error(
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     cwd = str(tmp_path)
     meta = _await_job_result_meta(cwd)
-    res = await server._await_job_result(
-        cwd, "job-abc", "kimi_consult", meta, "summary", 180, None
-    )
+    res = await server._await_job_result(cwd, "job-abc", "kimi_consult", meta, "summary", 180, None)
     assert res["ok"] is False
     assert res["error"]["code"] == "internal_error"
 
@@ -5841,9 +5834,7 @@ async def test_await_job_result_no_ctx_no_progress_calls(clean_env, tmp_path, mo
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     cwd = str(tmp_path)
     meta = _await_job_result_meta(cwd)
-    res = await server._await_job_result(
-        cwd, "job-abc", "kimi_consult", meta, "summary", 180, None
-    )
+    res = await server._await_job_result(cwd, "job-abc", "kimi_consult", meta, "summary", 180, None)
     assert res["ok"] is True
 
 
@@ -8001,9 +7992,7 @@ class TestJobListNarrowing:
         rows, not a thousand."""
         await _seed_jobs(monkeypatch, tmp_path, count=1001)
         async with Client(server.mcp) as c:
-            r = await c.call_tool(
-                "kimi_job_list", {"workspace_root": str(tmp_path), "limit": 1000}
-            )
+            r = await c.call_tool("kimi_job_list", {"workspace_root": str(tmp_path), "limit": 1000})
         body = r.structured_content
         assert len(body["jobs"]) == 1000
         assert body["truncated"] is True
@@ -8082,9 +8071,7 @@ class TestJobListNarrowing:
             assert len(r.structured_content["jobs"]) == 2
             assert r.structured_content["truncated"] is True
             # `bool` is an int subclass, so `true` silently narrows the listing to one row.
-            r = await c.call_tool(
-                "kimi_job_list", {"workspace_root": str(tmp_path), "limit": True}
-            )
+            r = await c.call_tool("kimi_job_list", {"workspace_root": str(tmp_path), "limit": True})
             assert len(r.structured_content["jobs"]) == 1
             # An integral float is accepted; a fractional one is not.
             r = await c.call_tool("kimi_job_list", {"workspace_root": str(tmp_path), "limit": 2.0})
@@ -8623,9 +8610,7 @@ async def test_blank_question_rejected_pre_spend(clean_env, tmp_path, tool, blan
 
 
 @pytest.mark.parametrize("blank", _BLANK_INPUTS)
-@pytest.mark.parametrize(
-    "tool", ["kimi_delegate", "kimi_delegate_async", "kimi_delegate_dry_run"]
-)
+@pytest.mark.parametrize("tool", ["kimi_delegate", "kimi_delegate_async", "kimi_delegate_dry_run"])
 async def test_blank_task_rejected_pre_spend(monkeypatch, clean_env, tmp_path, tool, blank):
     monkeypatch.setattr(server.worktree, "ensure_repo_with_head", lambda *a, **k: None)
     res = await getattr(server, tool)(blank, workspace_root=str(tmp_path))

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from kimi_in_claude._core import gitdiff, gitproc, worktree
 from conftest import run_git
+from kimi_in_claude._core import gitdiff, gitproc, worktree
 
 
 def _git(cwd, *args):

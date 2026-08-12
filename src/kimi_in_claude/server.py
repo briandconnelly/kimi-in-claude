@@ -51,7 +51,7 @@ from kimi_in_claude import (
 from kimi_in_claude._core import gitdiff, idempotency, redaction, workspace, worktree
 from kimi_in_claude._core.jobs import DiscardOutcome
 from kimi_in_claude.errors import make_error, serialize_error, serialize_error_info
-from kimi_in_claude.kimi_models import read_model_catalog
+from kimi_in_claude.kimi_models import read_model_catalog, supported_efforts_for
 from kimi_in_claude.schemas import (
     CAPABILITIES_RESULT_SCHEMA,
     CAPABILITIES_SCHEMA,
@@ -1086,6 +1086,45 @@ def _extra_args_error(meta: Meta) -> dict | None:
             error=make_error(
                 "extra_args_rejected",
                 f"{config.EXTRA_ARGS_ENV} is invalid: {extra.error}.",
+            ),
+            meta=meta,
+        )
+    )
+
+
+def _reasoning_effort_unsupported_error(
+    effort: str | None, model: str | None, meta: Meta
+) -> dict | None:
+    """Pre-spend guard on whether the resolved model ACCEPTS the resolved effort.
+
+    This is the only validation that happens at all. Verified on kimi-code 0.35.0: kimi
+    SILENTLY IGNORES an unrecognized KIMI_MODEL_THINKING_EFFORT — it exits 0 and answers at
+    the model's default. So there is no backend rejection to classify, and without this
+    check the run would succeed while `meta.reasoning_effort` claimed an effort that was
+    never applied. Refusing costs nothing (zero spend) and keeps the envelope honest.
+
+    Only fires when the alias's supported set is actually known. `supported_efforts_for`
+    returns None for "cannot tell", which must never be read as "nothing is allowed".
+    """
+    if effort is None:
+        return None
+    supported = supported_efforts_for(model)
+    if not supported or effort in supported:
+        return None
+    meta.reasoning_effort = None
+    return serialize_error(
+        ErrorResult(
+            error=make_error(
+                "invalid_reasoning_effort",
+                "the requested reasoning_effort is not one this model declares.",
+                details=ErrorDetail(field="reasoning_effort"),
+                repair_alternative=(
+                    f"Pass one of: {', '.join(supported)} — or omit reasoning_effort to use "
+                    "the model's default. kimi_models lists each alias's declared efforts. "
+                    "Refused locally: kimi ignores an unrecognized effort instead of "
+                    "rejecting it, so the run would silently use the default while the "
+                    "result claimed otherwise."
+                ),
             ),
             meta=meta,
         )
@@ -2255,7 +2294,9 @@ async def _prepare_consult(
     extra_args_err = _extra_args_error(meta)
     if extra_args_err is not None:
         return extra_args_err
-    effort_err = _reasoning_effort_shape_error(effort, meta, from_config=reasoning_effort is None)
+    effort_err = _reasoning_effort_shape_error(
+        effort, meta, from_config=reasoning_effort is None
+    ) or _reasoning_effort_unsupported_error(effort, model or d.model, meta)
     if effort_err is not None:
         return effort_err
 
@@ -2392,7 +2433,9 @@ async def _prepare_review(
     extra_args_err = _extra_args_error(meta)
     if extra_args_err is not None:
         return extra_args_err
-    effort_err = _reasoning_effort_shape_error(effort, meta, from_config=reasoning_effort is None)
+    effort_err = _reasoning_effort_shape_error(
+        effort, meta, from_config=reasoning_effort is None
+    ) or _reasoning_effort_unsupported_error(effort, model or d.model, meta)
     if effort_err is not None:
         return effort_err
 
@@ -2487,7 +2530,9 @@ async def _prepare_delegate(
     extra_args_err = _extra_args_error(meta)
     if extra_args_err is not None:
         return extra_args_err
-    effort_err = _reasoning_effort_shape_error(effort, meta, from_config=reasoning_effort is None)
+    effort_err = _reasoning_effort_shape_error(
+        effort, meta, from_config=reasoning_effort is None
+    ) or _reasoning_effort_unsupported_error(effort, model or d.model, meta)
     if effort_err is not None:
         return effort_err
 
@@ -3861,7 +3906,9 @@ async def kimi_delegate_dry_run(
     extra_args_err = _extra_args_error(meta)
     if extra_args_err is not None:
         return extra_args_err
-    effort_err = _reasoning_effort_shape_error(effort, meta, from_config=reasoning_effort is None)
+    effort_err = _reasoning_effort_shape_error(
+        effort, meta, from_config=reasoning_effort is None
+    ) or _reasoning_effort_unsupported_error(effort, model or d.model, meta)
     if effort_err is not None:
         return effort_err
 

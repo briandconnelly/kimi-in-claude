@@ -331,9 +331,7 @@ def test_auth_beats_rate_limit_ordering():
 
 def test_drift_beats_rate_limit_ordering():
     # A genuine contract-drift error is never masked as a transient rate limit.
-    err = kimi.classify_failure(
-        CommandRun("", "error: invalid value 'x'; rate limit", 2, 1, False)
-    )
+    err = kimi.classify_failure(CommandRun("", "error: invalid value 'x'; rate limit", 2, 1, False))
     assert err.code == "cli_contract_changed"
 
 

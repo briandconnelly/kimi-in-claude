@@ -1,28 +1,27 @@
 """Shared propose-tier orchestration.
 
-`run_delegate` runs a coding task in an isolated git worktree (worktree create →
-`kimi exec` with `workspace-write` → capture diff → cleanup) and returns the
-normalized result envelope WITHOUT touching the live tree. Both the synchronous
-`kimi_delegate` tool and the background `_worker` call this, so the worktree
-logic lives in exactly one place. This module is import-light (no FastMCP app) so
-the background worker can use it without constructing the server.
+`run_delegate` runs a coding task in a throwaway git worktree and returns the normalized
+result envelope WITHOUT touching the live tree: the diff is handed back for review, never
+applied. The worktree lifecycle itself lives in `runspace`, shared with consult and review;
+this module owns only what is specific to the propose tier — the diffstat, secret
+redaction, and the byte bound on the returned diff.
+
+Both the synchronous `kimi_delegate` tool and the background `_worker` call this. The
+module is import-light (no MCP app) so the worker can use it without constructing the
+server.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from kimi_in_claude import config, kimi, normalize, prompts
+from kimi_in_claude import config, prompts, runspace
 from kimi_in_claude._core import redaction, worktree
-from kimi_in_claude.errors import make_error, serialize_error
 from kimi_in_claude.schemas import (
     ContextSummary,
     DelegateResult,
-    ErrorDetail,
-    ErrorResult,
     Meta,
     RawResponse,
-    Usage,
     dump_success,
 )
 
@@ -58,18 +57,9 @@ def _bound_diff(diff: str, meta: Meta, max_bytes: int) -> str:
     return encoded[:max_bytes].decode("utf-8", "ignore")
 
 
-def _apply_run_meta(meta: Meta, result: kimi.KimiRunResult) -> tuple[Usage | None, str | None]:
-    """Stamp a finished run's process metadata onto meta; return (usage, session)."""
-    meta.elapsed_ms = result.run.elapsed_ms
-    meta.command_exit_code = result.run.exit_code
-    meta.compat_warnings = result.dropped_flags
-    kimi.reconcile_dropped_model(result, meta)
-    usage, session_id = normalize.parse_event_metadata(result.events)
-    meta.usage = usage
-    meta.session_id = session_id
-    # meta.rate_limit stays None: kimi 0.144 no longer emits quota on the exec stream (#321);
-    # kimi_status fetches it live (no model spend), not per paid run. See orchestration.py.
-    return usage, session_id
+# Moved to runspace, which owns the run lifecycle for every tier. Re-exported so the
+# existing call sites and tests keep one name for it.
+_apply_run_meta = runspace.apply_run_meta
 
 
 async def run_delegate(
@@ -95,78 +85,30 @@ async def run_delegate(
     worker can record it for hard-kill cleanup. `max_diff_bytes` caps the inline
     diff (None → the configured default) so a large change cannot flood the agent's
     context; the diffstat still reflects the full diff."""
-    try:
-        wt = worktree.create(cwd, timeout=git_timeout, on_parent=on_worktree_parent)
-    except worktree.NotAGitRepoError as exc:
-        return serialize_error(
-            ErrorResult(
-                error=make_error(
-                    "not_a_git_repo",
-                    str(exc),
-                    details=ErrorDetail(field="workspace_root"),
-                ),
-                meta=meta,
-            )
-        )
-    except (worktree.NoCommitsError, worktree.WorktreeError) as exc:
-        return serialize_error(
-            ErrorResult(
-                error=make_error(
-                    "worktree_error",
-                    str(exc)[:300],
-                    repair_alternative=(
-                        "Ensure the repo has at least one commit and a clean git state."
-                    ),
-                ),
-                meta=meta,
-            )
-        )
-
-    # Captured while the worktree exists, for rewriting worktree-absolute paths out of
-    # Kimi's prose below — the teardown in the `finally` runs before that text is built.
-    wt_aliases = worktree.path_aliases(wt.path)
-    if wt.baseline_warning:
-        meta.security_warnings = [wt.baseline_warning]
-    try:
-        result = await kimi.run_kimi_exec(
-            prompts.build_delegate_prompt(task),
-            cwd=wt.path,
-            sandbox=sandbox,
-            isolation=isolation,
-            timeout_seconds=timeout_seconds,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            on_event=on_event,
-        )
-        _apply_run_meta(meta, result)
-        if result.run.exit_code != 0 or result.run.binary_missing or result.run.timed_out:
-            err = kimi.classify_failure(
-                result.run,
-                last_message=result.last_message,
-                events=result.events,
-                # See orchestration._stamp_meta: a backend effort rejection is the
-                # caller's argument, not contract drift (#309).
-                reasoning_effort=meta.reasoning_effort,
-                # Kimi runs with cwd=wt.path, so its raw stderr/event text can name the
-                # worktree, which is dead by the time this envelope reaches the caller
-                # (#420, the #412 remainder). sanitize_prose is the one approved
-                # relativize+redact composition (see the comment on the last_message
-                # rewrite below, which explains why the two passes can't be called
-                # separately); it REPLACES classify_failure's own redact_text call rather
-                # than adding a second pass.
-                sanitize=lambda t: worktree.sanitize_prose(t, wt_aliases) or "",
-            )
-            return serialize_error(ErrorResult(error=err, meta=meta))
-        diff = worktree.capture_diff(wt.path, timeout=git_timeout)
-    except worktree.WorktreeError as exc:
-        return serialize_error(
-            ErrorResult(
-                error=make_error("worktree_error", str(exc)[:300]),
-                meta=meta,
-            )
-        )
-    finally:
-        worktree.remove(cwd, wt, timeout=git_timeout)
+    outcome = await runspace.run_isolated(
+        prompts.build_delegate_prompt(task),
+        cwd=cwd,
+        meta=meta,
+        sandbox=sandbox,
+        isolation=isolation,
+        timeout_seconds=timeout_seconds,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        git_timeout=git_timeout,
+        # The whole point of the propose tier: keep what kimi changed, as a diff the
+        # caller reviews. consult/review pass False and discard it with the worktree.
+        capture_diff=True,
+        on_worktree_parent=on_worktree_parent,
+        on_event=on_event,
+    )
+    if outcome.error is not None:
+        return outcome.error
+    result = outcome.result
+    assert result is not None
+    diff = outcome.diff
+    # Captured while the worktree existed; it is gone by now, so these aliases are what
+    # rewrite worktree-absolute paths out of Kimi's prose below.
+    wt_aliases = outcome.aliases
 
     meta.context_summary = _diffstat(diff)
     # Redact inline secret-looking values from Kimi's free-text (mirroring the diff
@@ -178,9 +120,16 @@ async def run_delegate(
     # something a call site should have to remember. See that function for the two attacks.
     # One call covers both fields built from this text (summary and raw_response.text).
     last_message = worktree.sanitize_prose(result.last_message, wt_aliases)
-    summary = (last_message or "").strip() or "(kimi returned no summary)"
+    summary = (last_message or "").strip()
     if not diff.strip():
+        if not summary:
+            # No diff and no summary is an empty result, not a delegation. Reporting it as
+            # a success would hand the caller a DelegateResult carrying nothing at all.
+            return runspace.empty_answer_error(meta)
         summary = f"Kimi made no changes. {summary}"
+    elif not summary:
+        # The diff IS the product here, so a missing summary degrades rather than fails.
+        summary = "(kimi returned no summary; review the diff)"
     else:
         # Apply the same secret redaction the review path uses (gitdiff.gather_diff)
         # before the diff leaves this process: drop secret-looking file hunks and

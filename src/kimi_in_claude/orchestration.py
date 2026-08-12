@@ -533,15 +533,25 @@ async def run_review(
     prompt = prompts.build_review_prompt(
         diff.text, review_label(scope, base, commit), extra_context or ""
     )
-    result = await kimi.run_kimi_exec(
+    # The diff above was gathered from the REAL repo by this server's own git calls; kimi
+    # only ever sees it as prompt text. The run itself goes through the isolated path like
+    # every other tier — read-only agent profile, throwaway worktree, diff discarded — so
+    # a review cannot modify what it is reviewing.
+    outcome = await runspace.run_isolated(
         prompt,
         cwd=cwd,
+        meta=meta,
         sandbox=sandbox,
         isolation=isolation,
         timeout_seconds=timeout_seconds,
         model=model,
         reasoning_effort=reasoning_effort,
+        git_timeout=git_timeout,
+        capture_diff=False,
         output_schema=FINDINGS_OUTPUT_SCHEMA,
         on_event=on_event,
     )
-    return finalize_review(result, meta=meta, coverage=coverage)
+    if outcome.error is not None:
+        return outcome.error
+    assert outcome.result is not None
+    return finalize_review(outcome.result, meta=meta, coverage=coverage)

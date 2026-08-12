@@ -1,67 +1,61 @@
-"""Read Kimi's on-disk model catalog for advisory `model`-slug discovery.
+"""Read Kimi's configured model aliases for `model` and `reasoning_effort` discovery.
 
-Kimi-specific glue around the generic _core.jsoncache reader: resolves $KIMI_CODE_HOME,
-reads models_cache.json, validates its shape defensively, and falls back to the bundled
-KNOWN_MODEL_SLUGS when the cache is absent/unreadable. Discovery only — the result is
-explicitly advisory; `kimi exec` validates the real slug.
+Unlike Codex, which publishes a models cache keyed by provider slug, kimi's `-m` takes an
+ALIAS the user defined in their own config.toml. The catalog therefore comes from
+`kimi provider list --json`, which reports exactly the aliases that will work.
+
+**This source contains secrets.** Its `providers` block carries `apiKey` in plaintext and
+`baseUrl`, which can name private infrastructure. Neither is parsed into the catalog and
+neither may ever reach an envelope — only alias names and their effort metadata are read.
+`parse_catalog` is deliberately allowlist-shaped (it reads named fields off `models`) rather
+than filtering a copy of the payload, so a new secret-bearing field upstream cannot leak by
+default.
+
+Unlike the Codex catalog, this one is AUTHORITATIVE for the alias set: kimi rejects an
+unknown alias outright (`invalid_model`). It is only advisory for whether a given effort is
+honoured — see `supported_efforts_for`.
 """
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import json
 
 from kimi_in_claude import cli_contract
-from kimi_in_claude._core.jsoncache import read_bounded_json
+from kimi_in_claude._core import runtime
 from kimi_in_claude.schemas import ModelCatalogResult, ModelInfo
 
 _ADVISORY = (
-    "Advisory model list for the `model` and `reasoning_effort` params — not "
-    "authoritative. Kimi validates the slug (and the backend the effort) at run "
-    "time; an unlisted value may still work and a listed one may be unavailable to "
-    "your account."
+    "Model aliases configured in your kimi config.toml. `model` takes one of these alias "
+    "names, not a raw provider model id. supported_reasoning_efforts is what the alias "
+    "declares; kimi does not reject an unrecognized effort, it ignores it."
 )
 _UNAVAILABLE = (
-    "No model catalog found: Kimi has not written its on-disk cache yet (a fresh "
-    "install populates it on first use) and no bundled fallback is configured. Pass a "
-    "known Kimi model slug directly; it is validated at run time."
+    "No model catalog: `kimi provider list --json` returned nothing usable. Run "
+    '`kimi login` or define a provider and a [models."<alias>"] entry in config.toml, '
+    "then rerun kimi_status."
 )
 
-
-def _kimi_home() -> Path | None:
-    """$KIMI_CODE_HOME if set, else ~/.kimi (matching the kimi CLI's own resolution).
-
-    Returns None if the path cannot be expanded (e.g. KIMI_CODE_HOME=~missing_user, where
-    expanduser() raises RuntimeError) so the caller falls back instead of crashing.
-    """
-    env = os.environ.get("KIMI_CODE_HOME")
-    try:
-        return Path(env).expanduser() if env else Path.home() / ".kimi"
-    except RuntimeError:
-        return None
+PROBE_TIMEOUT_SECONDS = 10
 
 
 def _effort_token(value: object) -> str | None:
-    """A cache-supplied effort token, or None when it fails the defensive shape."""
+    """An effort token, or None when it fails the defensive shape."""
     if not isinstance(value, str) or not cli_contract.REASONING_EFFORT_TOKEN_PATTERN.match(value):
         return None
     return value
 
 
 def _supported_efforts(raw: object) -> list[str] | None:
-    """Effort tokens from a cache entry's supported_reasoning_levels, or None.
+    """Effort tokens from an alias's `supportEfforts`, or None when absent/unusable.
 
-    The cache advertises a list of objects ({effort, description, ...}) — shape
-    re-verified against the 0.147 cache on 2026-08-07; only
-    the effort tokens are surfaced (the descriptions are UI copy). Entries failing
-    the defensive shape are dropped, duplicates are kept once (order preserved), and
-    the list is capped. None = absent or unusable (a non-list, or a non-empty list
-    that yielded nothing); [] = an explicitly empty advertised set."""
+    None = absent or unusable; [] = an explicitly empty advertised set. The distinction
+    matters to `supported_efforts_for`, which must not treat "unknown" as "none allowed".
+    """
     if not isinstance(raw, list):
         return None
     efforts: list[str] = []
     for entry in raw[: cli_contract.SUPPORTED_EFFORTS_MAX_ENTRIES]:
-        token = _effort_token(entry.get("effort")) if isinstance(entry, dict) else None
+        token = _effort_token(entry)
         if token is not None and token not in efforts:
             efforts.append(token)
     if raw and not efforts:
@@ -69,71 +63,73 @@ def _supported_efforts(raw: object) -> list[str] | None:
     return efforts
 
 
-def _parse_models(raw: object) -> tuple[list[ModelInfo], str | None, str | None] | None:
-    """Validate the cache's expected shape, or None if it has drifted.
+def parse_catalog(payload: object) -> list[ModelInfo] | None:
+    """Model aliases from a `kimi provider list --json` payload, or None if it drifted.
 
-    Returns (models, fetched_at, client_version). Drops entries whose slug fails
-    MODEL_SLUG_PATTERN and caps the list at MODELS_CACHE_MAX_ENTRIES; returns None when
-    the top-level shape is wrong or no valid entry survives (caller falls back to static).
+    Reads ONLY the `models` map, and only named fields within it. The sibling `providers`
+    map (apiKey, baseUrl) is never touched.
     """
-    if not isinstance(raw, dict):
+    if not isinstance(payload, dict):
         return None
-    entries = raw.get("models")
-    if not isinstance(entries, list):
+    entries = payload.get("models")
+    if not isinstance(entries, dict):
         return None
     models: list[ModelInfo] = []
-    for entry in entries[: cli_contract.MODELS_CACHE_MAX_ENTRIES]:
-        if not isinstance(entry, dict):
+    for alias, entry in list(entries.items())[: cli_contract.MODELS_CACHE_MAX_ENTRIES]:
+        if not isinstance(alias, str) or not cli_contract.MODEL_SLUG_PATTERN.match(alias):
             continue
-        slug = entry.get("slug")
-        if not isinstance(slug, str) or not cli_contract.MODEL_SLUG_PATTERN.match(slug):
-            continue
-        display = entry.get("display_name")
+        fields = entry if isinstance(entry, dict) else {}
+        display = fields.get("displayName")
         display = display if isinstance(display, str) and len(display) <= 128 else None
         models.append(
             ModelInfo(
-                slug=slug,
+                slug=alias,
                 display_name=display,
-                default_reasoning_effort=_effort_token(entry.get("default_reasoning_level")),
-                supported_reasoning_efforts=_supported_efforts(
-                    entry.get("supported_reasoning_levels")
-                ),
+                default_reasoning_effort=_effort_token(fields.get("defaultEffort")),
+                supported_reasoning_efforts=_supported_efforts(fields.get("supportEfforts")),
             )
         )
-    if not models:
+    return models or None
+
+
+def _probe() -> object | None:
+    """Run the free provider-list probe and return its parsed payload, or None."""
+    run = runtime.run_sync_capture(
+        [cli_contract.KIMI_BIN, *cli_contract.PROVIDER_LIST_ARGS],
+        timeout_seconds=PROBE_TIMEOUT_SECONDS,
+    )
+    if run.binary_missing or run.timed_out or run.exit_code != 0:
         return None
-    fetched_at = raw.get("fetched_at")
-    fetched_at = fetched_at if isinstance(fetched_at, str) and len(fetched_at) <= 64 else None
-    version = raw.get("client_version")
-    version = version if isinstance(version, str) and len(version) <= 64 else None
-    return models, fetched_at, version
+    if len(run.stdout.encode("utf-8", "replace")) > cli_contract.MODELS_CACHE_MAX_BYTES:
+        return None
+    try:
+        return json.loads(run.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def read_model_catalog() -> ModelCatalogResult:
-    """The advisory model catalog: live cache if usable, else bundled static, else none."""
-    home = _kimi_home()
-    raw = (
-        read_bounded_json(
-            home / cli_contract.MODELS_CACHE_FILENAME,
-            cli_contract.MODELS_CACHE_MAX_BYTES,
-        )
-        if home is not None
-        else None
-    )
-    parsed = _parse_models(raw) if raw is not None else None
-    if parsed is not None:
-        models, fetched_at, version = parsed
-        return ModelCatalogResult(
-            source="cache",
-            models=models,
-            fetched_at=fetched_at,
-            cache_client_version=version,
-            advisory=_ADVISORY,
-        )
-    if cli_contract.KNOWN_MODEL_SLUGS:
-        return ModelCatalogResult(
-            source="static",
-            models=[ModelInfo(slug=s) for s in cli_contract.KNOWN_MODEL_SLUGS],
-            advisory=_ADVISORY,
-        )
+    """The model catalog from the live probe, or an explicit 'none'."""
+    models = parse_catalog(_probe())
+    if models:
+        return ModelCatalogResult(source="cache", models=models, advisory=_ADVISORY)
     return ModelCatalogResult(source="none", advisory=_ADVISORY, unavailable_reason=_UNAVAILABLE)
+
+
+def supported_efforts_for(
+    model: str | None, catalog: ModelCatalogResult | None = None
+) -> list[str] | None:
+    """Efforts the named alias declares, or None when unknown.
+
+    None means "cannot tell" — an absent catalog, an unlisted alias, or an alias that
+    declares nothing — and callers MUST treat it as "do not reject". kimi silently ignores
+    an unrecognized effort (verified on 0.35.0), so refusing on a guess would block a valid
+    run while accepting on a guess only risks the effort being ignored.
+    """
+    if not model:
+        return None
+    cat = catalog if catalog is not None else read_model_catalog()
+    for info in cat.models:
+        if info.slug == model:
+            return info.supported_reasoning_efforts
+    return None

@@ -6,7 +6,7 @@ import json
 
 import anyio
 
-from kimi_in_claude import kimi, orchestration
+from kimi_in_claude import cli_contract, kimi, orchestration
 from kimi_in_claude._core import redaction
 from kimi_in_claude._core.gitdiff import DiffResult, DiffSummary, InvalidUntrackedError
 from kimi_in_claude._core.runtime import CommandRun
@@ -19,6 +19,10 @@ _RATE_LIMIT_EVENTS = (
     '"secondary":{"used_percent":5.0,"window_minutes":10080,"resets_at":9999999999},'
     '"plan_type":"plus"}}}'
 )
+
+
+def kimi_run(stdout: str, stderr: str, exit_code: int, elapsed_ms: int) -> CommandRun:
+    return CommandRun(stdout, stderr, exit_code, elapsed_ms, False)
 
 
 def _make_meta() -> Meta:
@@ -146,10 +150,10 @@ def test_stamp_meta_clears_model_when_model_flag_dropped(monkeypatch):
 
     meta = _make_meta()
     meta.model = "gpt-5.5"
-    result = _make_exec_result(exit_code=0, dropped_flags=["--model"])
+    result = _make_exec_result(exit_code=0, dropped_flags=[cli_contract.MODEL_FLAG])
     orchestration._stamp_meta(result, meta)
     assert meta.model is None
-    assert "--model" in meta.compat_warnings
+    assert cli_contract.MODEL_FLAG in meta.compat_warnings
 
 
 def test_stamp_meta_preserves_model_when_not_dropped(monkeypatch):
@@ -168,11 +172,13 @@ def test_finalize_consult_raw_response_model_reflects_dropped_model(monkeypatch)
 
     meta = _make_meta()
     meta.model = "gpt-5.5"
-    result = _make_exec_result(exit_code=0, last_message="hello", dropped_flags=["--model"])
+    result = _make_exec_result(
+        exit_code=0, last_message="hello", dropped_flags=[cli_contract.MODEL_FLAG]
+    )
     out = orchestration.finalize_consult(result, meta=meta)
     assert out["meta"]["model"] is None
     assert out["raw_response"]["model"] is None
-    assert "--model" in out["meta"]["compat_warnings"]
+    assert cli_contract.MODEL_FLAG in out["meta"]["compat_warnings"]
 
 
 def test_stamp_meta_failure_path_leaves_rate_limit_none(monkeypatch):
@@ -608,32 +614,30 @@ def test_run_review_forwards_reasoning_effort(monkeypatch):
     assert captured["reasoning_effort"] == "xhigh"
 
 
-def test_stamp_meta_classifies_effort_rejection_from_meta(monkeypatch):
-    # The failure classifier must learn the sent effort from meta, so a backend
-    # effort rejection maps to invalid_reasoning_effort — not cli_contract_changed.
-    rejection = (
-        '{"type":"error","message":"[ReasoningEffortParam] [reasoning.effort] '
-        "[invalid_enum_value] Invalid value: 'bogus'.\"}"
-    )
+def test_a_backend_effort_rejection_is_not_classified_because_kimi_never_sends_one():
+    """kimi does not reject an unrecognized reasoning effort — verified on 0.35.0, where a
+    bogus KIMI_MODEL_THINKING_EFFORT exits 0 and answers at the model's default. There is
+    therefore no backend rejection to classify, and the effort is validated locally before
+    spend instead (server._reasoning_effort_unsupported_error). This test pins that
+    absence: if a future kimi starts rejecting efforts, the classifier needs a branch and
+    this test should be replaced rather than quietly deleted."""
     meta = _make_meta()
     meta.reasoning_effort = "bogus"
-    result = kimi.KimiRunResult(
-        run=CommandRun(rejection, "", 1, 12, False), last_message=None, events=rejection
-    )
+    # An effort-shaped message that is NOT a kimi CLI rejection must not be dressed up as
+    # one; it falls through to the generic exit classification.
+    blob = "the model ignored the requested effort"
+    result = kimi.KimiRunResult(run=kimi_run(blob, "", 1, 12), last_message=None, events="")
     out = orchestration._stamp_meta(result, meta)
     assert out is not None
-    assert out["error"]["code"] == "invalid_reasoning_effort"
+    assert out["error"]["code"] == "nonzero_exit"
 
 
-def test_stamp_meta_effort_rejection_without_sent_effort_is_drift(monkeypatch):
-    rejection = (
-        '{"type":"error","message":"[reasoning.effort] [invalid_enum_value] '
-        "Invalid value: 'bogus'.\"}"
-    )
-    meta = _make_meta()  # meta.reasoning_effort is None
-    result = kimi.KimiRunResult(
-        run=CommandRun(rejection, "", 1, 12, False), last_message=None, events=rejection
-    )
+def test_a_real_kimi_flag_rejection_is_contract_drift():
+    """A guarantee-bearing flag the installed kimi refuses must fail loudly. The message
+    is kimi's real commander-style rejection, captured from kimi-code 0.35.0."""
+    meta = _make_meta()
+    blob = "error: unknown option '--output-format'"
+    result = kimi.KimiRunResult(run=kimi_run("", blob, 1, 12), last_message=None, events="")
     out = orchestration._stamp_meta(result, meta)
     assert out is not None
     assert out["error"]["code"] == "cli_contract_changed"

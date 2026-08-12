@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from kimi_in_claude import kimi
+from kimi_in_claude import cli_contract, kimi
 from kimi_in_claude._core.runtime import CommandRun
 from kimi_in_claude.schemas import Meta
 
@@ -70,10 +70,10 @@ def test_apply_run_meta_clears_model_when_model_flag_dropped(monkeypatch):
 
     meta = _make_meta()
     meta.model = "gpt-5.5"
-    result = _make_exec_result(exit_code=0, dropped_flags=["--model"])
+    result = _make_exec_result(exit_code=0, dropped_flags=[cli_contract.MODEL_FLAG])
     delegate._apply_run_meta(meta, result)
     assert meta.model is None
-    assert "--model" in meta.compat_warnings
+    assert cli_contract.MODEL_FLAG in meta.compat_warnings
 
 
 def test_apply_run_meta_preserves_model_when_not_dropped(monkeypatch):
@@ -92,7 +92,7 @@ def test_run_delegate_forwards_on_event(monkeypatch):
 
     import anyio
 
-    from kimi_in_claude import delegate
+    from kimi_in_claude import delegate, runspace
     from kimi_in_claude._core import worktree
 
     captured: dict = {}
@@ -107,7 +107,7 @@ def test_run_delegate_forwards_on_event(monkeypatch):
     monkeypatch.setattr(worktree, "create", fake_create)
     monkeypatch.setattr(worktree, "capture_diff", lambda *a, **k: "")
     monkeypatch.setattr(worktree, "remove", lambda *a, **k: None)
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake_exec)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake_exec)
     sentinel = lambda _l: None  # noqa: E731
     meta = Meta(
         cwd="/tmp",
@@ -177,7 +177,7 @@ def test_run_delegate_forwards_reasoning_effort(monkeypatch):
 
     import anyio
 
-    from kimi_in_claude import delegate
+    from kimi_in_claude import delegate, runspace
     from kimi_in_claude._core import worktree
 
     captured: dict = {}
@@ -192,7 +192,7 @@ def test_run_delegate_forwards_reasoning_effort(monkeypatch):
     monkeypatch.setattr(worktree, "create", fake_create)
     monkeypatch.setattr(worktree, "capture_diff", lambda *a, **k: "")
     monkeypatch.setattr(worktree, "remove", lambda *a, **k: None)
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake_exec)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake_exec)
     meta = Meta(
         cwd="/tmp",
         tier="propose",
@@ -217,65 +217,55 @@ def test_run_delegate_forwards_reasoning_effort(monkeypatch):
     assert captured["reasoning_effort"] == "low"
 
 
-def test_run_delegate_classifies_effort_rejection(monkeypatch):
+def test_run_delegate_reports_a_flag_rejection_as_contract_drift(monkeypatch):
+    """Replaces a Codex-era test for a backend effort rejection, which kimi never emits
+    (see test_orchestration). A guarantee-bearing flag rejection must still fail loudly."""
     from types import SimpleNamespace
 
     import anyio
 
-    from kimi_in_claude import delegate
+    from kimi_in_claude import delegate, runspace
     from kimi_in_claude._core import worktree
 
-    rejection = (
-        '{"type":"error","message":"[ReasoningEffortParam] [reasoning.effort] '
-        "[invalid_enum_value] Invalid value: 'bogus'.\"}"
-    )
+    rejection = "error: unknown option '--output-format'"
 
     def fake_create(*a, **k):
         return SimpleNamespace(path="/tmp/wt", baseline_warning=None)
 
     async def fake_exec(prompt, **kwargs):
         return kimi.KimiRunResult(
-            run=CommandRun(rejection, "", 1, 1, False), last_message=None, events=rejection
+            run=CommandRun("", rejection, 1, 1, False), last_message=None, events=""
         )
 
     monkeypatch.setattr(worktree, "create", fake_create)
-    monkeypatch.setattr(worktree, "capture_diff", lambda *a, **k: "")
     monkeypatch.setattr(worktree, "remove", lambda *a, **k: None)
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake_exec)
-    meta = Meta(
-        cwd="/tmp",
-        tier="propose",
-        sandbox="workspace-write",
-        isolation="inherit",
-        timeout_seconds=10,
-        elapsed_ms=0,
-        reasoning_effort="bogus",
-    )
+    monkeypatch.setattr(worktree, "path_aliases", lambda *a, **k: ())
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake_exec)
+
+    meta = _make_meta()
+    meta.reasoning_effort = "bogus"
     out = anyio.run(
         lambda: delegate.run_delegate(
-            "task",
-            "/tmp",
+            "t",
+            "/repo",
             meta,
             sandbox="workspace-write",
             isolation="inherit",
-            timeout_seconds=10,
+            timeout_seconds=60,
             model=None,
-            reasoning_effort="bogus",
-            git_timeout=30,
+            git_timeout=60,
         )
     )
-    assert out["ok"] is False
-    assert out["error"]["code"] == "invalid_reasoning_effort"
+    assert out["error"]["code"] == "cli_contract_changed"
 
 
-# --- Worktree paths in returned prose (#412) ----------------------------------------
 def _run_delegate_with_message(monkeypatch, message: str, *, wt_path: str, diff: str = ""):
     """Drive run_delegate with a canned last_message and worktree path; return the result."""
     from types import SimpleNamespace
 
     import anyio
 
-    from kimi_in_claude import delegate
+    from kimi_in_claude import delegate, runspace
     from kimi_in_claude._core import worktree
 
     removed: list = []
@@ -288,7 +278,7 @@ def _run_delegate_with_message(monkeypatch, message: str, *, wt_path: str, diff:
     )
     monkeypatch.setattr(worktree, "capture_diff", lambda *a, **k: diff)
     monkeypatch.setattr(worktree, "remove", lambda *a, **k: removed.append(True))
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake_exec)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake_exec)
 
     result = anyio.run(
         lambda: delegate.run_delegate(
@@ -342,8 +332,10 @@ def test_run_delegate_preserves_none_last_message(monkeypatch, tmp_path):
     must not coerce None into a string."""
     wt = str(tmp_path / "cic-worktree-z" / "tree")
     result, _ = _run_delegate_with_message(monkeypatch, None, wt_path=wt)
-    assert result["raw_response"]["text"] is None
-    assert result["summary"] == "Kimi made no changes. (kimi returned no summary)"
+    # No diff AND no summary is an empty result, not a delegation: returning ok=True with
+    # a "(no summary)" placeholder would hand the caller an envelope carrying nothing.
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_response"
 
 
 def test_run_delegate_does_not_let_a_secret_ride_on_a_worktree_path(monkeypatch, tmp_path):
@@ -388,7 +380,7 @@ def _run_delegate_with_failure(monkeypatch, stderr: str, *, wt_path: str, exit_c
 
     import anyio
 
-    from kimi_in_claude import delegate
+    from kimi_in_claude import delegate, runspace
     from kimi_in_claude._core import worktree
 
     async def fake_exec(prompt, **kwargs):
@@ -401,7 +393,7 @@ def _run_delegate_with_failure(monkeypatch, stderr: str, *, wt_path: str, exit_c
     )
     monkeypatch.setattr(worktree, "capture_diff", lambda *a, **k: "")
     monkeypatch.setattr(worktree, "remove", lambda *a, **k: None)
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake_exec)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake_exec)
 
     return anyio.run(
         lambda: delegate.run_delegate(
