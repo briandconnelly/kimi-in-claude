@@ -131,7 +131,12 @@ def _ps_matches(marker: str) -> list[tuple[int, int]]:
     _validate_marker(marker)
     try:
         proc = subprocess.run(
-            ["ps", "-axo", "pid=,pgid=,command="],
+            # -ww is load-bearing on Linux: GNU ps truncates the command column to the
+            # terminal width (~80 chars) by default, so a marker further along the command
+            # line is invisible and the sweep silently finds nothing — the exact failure it
+            # exists to prevent. BSD ps accepts -ww too. Found by CI: these matched on
+            # macOS and found nothing on Linux.
+            ["ps", "-axww", "-o", "pid=,pgid=,command="],
             capture_output=True,
             text=True,
             timeout=10,

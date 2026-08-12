@@ -210,3 +210,36 @@ class _suppress:
 
     def __exit__(self, exc_type, exc, tb):
         return exc_type in (ProcessLookupError, PermissionError)
+
+
+def test_the_ps_invocation_disables_width_truncation():
+    """GNU ps truncates the command column to terminal width by default, which hides a
+    marker further along the command line — the sweep then finds nothing and reports
+    success. Invisible on macOS, where BSD ps does not truncate; CI on Linux is what
+    caught it. Pin the flag so it cannot be dropped as noise.
+    """
+    import inspect
+
+    source = inspect.getsource(runtime._ps_matches)
+    assert '"-axww"' in source or '"-ww"' in source
+
+
+def test_find_orphans_sees_a_marker_late_in_a_long_command_line(marker, reap):
+    """The behavioral counterpart: a marker past the ~80-column truncation point must
+    still be found."""
+    padding = "x" * 300
+    leader_code = (
+        "import os, subprocess, sys, time\n"
+        f"code = 'import time  # {padding} ' + os.environ['KIC_TEST_MARKER'] "
+        "+ '\\ntime.sleep(120)'\n"
+        "subprocess.Popen([sys.executable, '-c', code], start_new_session=True)\n"
+        "time.sleep(120)\n"
+    )
+    subprocess.Popen(
+        [sys.executable, "-c", leader_code],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={**os.environ, "KIC_TEST_MARKER": marker},
+    )
+    assert _wait_for_orphan(marker), "a marker past the truncation point was not found"
