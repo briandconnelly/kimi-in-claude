@@ -25,37 +25,38 @@ from kimi_in_claude._core import runtime
 
 
 def _spawn_detached_child(marker: str) -> subprocess.Popen:
-    """Reproduce kimi's process topology.
+    """Reproduce kimi's process topology, in three layers.
 
-    The leader runs in its own session (as the plugin spawns kimi), and it starts a
-    grandchild in a SEPARATE session whose command line embeds `marker` — mirroring
-    kimi's Bash tool, which spawns `/bin/bash -c cd '<worktree>' && ...` with its own
-    pgid so it survives a killpg on the leader's group.
+        leader   (own session)            — stands in for the kimi process we killpg
+          └── marked   (own session)      — carries `marker` in argv, like kimi's
+              └── unmarked (same group)     `bash -c cd '<worktree>' && sleep`
 
-    A grandchild in the leader's own group would be reclaimed by killpg, which is exactly
-    the case that does NOT need a sweep, so the test would prove nothing.
+    `marked` being in its OWN session is the whole point: a killpg on the leader's group
+    does not reach it, which is the defect the sweep exists to close. `unmarked` carries no
+    marker of its own, so it can only be reclaimed by killing `marked`'s process GROUP —
+    the second bug found here, where killing matched pids alone stranded it with ppid 1.
+
+    The processes are python rather than shell: a shell may exec-optimize itself away
+    (dash and macOS sh differ), dropping the marker and making the test platform-dependent.
     """
-    leader = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            (
-                # `cd ... && sleep` is a COMPOUND command, so the shell does not
-                # exec-optimize itself away and its argv keeps the marker — the same
-                # reason kimi's real strays stay visible as
-                # `/bin/bash -c cd '<worktree>' && ...`. A bare `sh -c "sleep 120"`
-                # would exec into `sleep` and lose the marker entirely.
-                "import subprocess, time\n"
-                f"subprocess.Popen(['/bin/sh', '-c', \"cd /tmp && sleep 120 # {marker}\"],"
-                " start_new_session=True)\n"
-                "time.sleep(120)\n"
-            ),
-        ],
+    # The marker reaches the leader through the ENVIRONMENT, not its argv. Embedding the
+    # grandchild's source in the leader's `-c` string would put the marker in the leader's
+    # command line too, so the marker search would match the leader as well and the
+    # "unmarked child" assertion below could not distinguish them.
+    leader_code = (
+        "import os, subprocess, sys, time\n"
+        "code = 'import subprocess, time  # ' + os.environ['KIC_TEST_MARKER'] + "
+        '\'\\nsubprocess.Popen(["sleep", "120"])\\ntime.sleep(120)\'\n'
+        "subprocess.Popen([sys.executable, '-c', code], start_new_session=True)\n"
+        "time.sleep(120)\n"
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", leader_code],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env={**os.environ, "KIC_TEST_MARKER": marker},
     )
-    return leader
 
 
 def _alive(pid: int) -> bool:
@@ -64,6 +65,22 @@ def _alive(pid: int) -> bool:
     except (ProcessLookupError, PermissionError):
         return False
     return True
+
+
+def _wait_for_orphan(marker: str, timeout: float = 15.0) -> list[int]:
+    """Poll until the spawned grandchild appears.
+
+    A fixed sleep raced on slower CI runners: process startup there took longer than the
+    0.4s this used to assume, so `find_orphans` legitimately returned [] and the test
+    failed for a reason that had nothing to do with the sweep.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        found = runtime.find_orphans(marker)
+        if found:
+            return found
+        time.sleep(0.1)
+    return []
 
 
 def _wait_gone(pid: int, timeout: float = 5.0) -> bool:
@@ -96,8 +113,7 @@ def reap(marker):
 
 def test_find_orphans_locates_a_process_by_marker(marker, reap):
     _spawn_detached_child(marker)
-    time.sleep(0.4)
-    assert runtime.find_orphans(marker), "sweep found nothing — a real orphan would be missed"
+    assert _wait_for_orphan(marker), "sweep found nothing — a real orphan would be missed"
 
 
 def test_find_orphans_is_empty_for_an_unused_marker():
@@ -114,8 +130,7 @@ def test_find_orphans_never_returns_our_own_pid(marker):
 def test_sweep_orphans_kills_a_survivor_of_killpg(marker, reap):
     """The M0-7 scenario end to end: killpg leaves the child, the sweep reclaims it."""
     proc = _spawn_detached_child(marker)
-    time.sleep(0.4)
-    orphans = runtime.find_orphans(marker)
+    orphans = _wait_for_orphan(marker)
     assert orphans, "precondition failed: no orphan to reclaim"
 
     # Kill only the leader's group, exactly as _kill_group does.
@@ -145,18 +160,23 @@ def test_sweep_orphans_reclaims_an_unmarked_grandchild(marker, reap):
     that pid is not enough — the whole process group has to go.
     """
     proc = _spawn_detached_child(marker)
-    time.sleep(0.5)
-    marked = runtime.find_orphans(marker)
+    marked = _wait_for_orphan(marker)
     assert marked, "precondition failed: no marked process"
 
-    # The `sleep` grandchild is a child of the marked shell and carries no marker itself.
-    unmarked = [
-        int(pid)
-        for pid in subprocess.run(
-            ["pgrep", "-P", str(marked[0])], capture_output=True, text=True, check=False
-        ).stdout.split()
-    ]
-    assert unmarked, "precondition failed: marked shell has no child to strand"
+    # The `sleep` is a child of the marked process and carries no marker of its own.
+    unmarked = []
+    for parent in marked:
+        unmarked += [
+            int(pid)
+            for pid in subprocess.run(
+                ["pgrep", "-P", str(parent)], capture_output=True, text=True, check=False
+            ).stdout.split()
+        ]
+    unmarked = [pid for pid in unmarked if pid not in marked]
+    assert unmarked, "precondition failed: no unmarked child to strand"
+    # It must be invisible to a marker search — otherwise this test proves nothing about
+    # reclaiming processes the marker cannot find.
+    assert not set(unmarked) & set(runtime.find_orphans(marker))
 
     with _suppress():
         os.killpg(proc.pid, signal.SIGKILL)

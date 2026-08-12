@@ -364,8 +364,17 @@ def test_mcp_json_launches_the_local_checkout():
     assert not any("==" in a for a in server["args"])
 
 
-def test_the_local_directory_in_mcp_json_is_this_repo():
+def test_the_local_directory_in_mcp_json_is_absolute():
+    """The launch path must be absolute — a relative one would resolve against whatever
+    directory the MCP client happened to start in.
+
+    Whether it points at a real checkout is only checkable on the machine that wrote it,
+    so that half is skipped elsewhere (CI clones to a different path).
+    """
     config = json.loads((ROOT / ".mcp.json").read_text())
     args = config["mcpServers"]["kimi-in-claude"]["args"]
     directory = Path(args[args.index("--directory") + 1])
+    assert directory.is_absolute()
+    if not directory.exists():
+        pytest.skip("the configured checkout path does not exist on this machine")
     assert (directory / "pyproject.toml").exists(), "the .mcp.json path is not a checkout"
