@@ -18,9 +18,9 @@ import pytest
 from kimi_in_claude import kimi_models
 from kimi_in_claude._core.runtime import BINARY_NOT_FOUND, CommandRun
 
-# The real shape of `kimi provider list --json`. The apiKey is a marker so the
-# never-leaks assertions have a genuine secret to catch; the baseUrl is deliberately a
-# placeholder, since a real one names private infrastructure.
+# The real SHAPE of `kimi provider list --json`, with invented values throughout: a real
+# provider id, model alias, or base URL names private infrastructure. Only the apiKey is a
+# deliberate marker, so the never-leaks assertions have a genuine secret to catch.
 REAL_PAYLOAD = {
     "providers": {
         "acme": {

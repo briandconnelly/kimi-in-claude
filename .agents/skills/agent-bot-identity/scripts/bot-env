@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+# GIT_CONFIG_VALUE_1 below is a `!`-prefixed credential.helper, which git
+# re-parses through `sh -c`: a space in the install path breaks the command and
+# a `$(...)` in it executes. Quoting is not enough — allowlist the characters.
+case "$SCRIPT_DIR" in
+  *[!A-Za-z0-9._/-]*) echo "bot-env: install path contains an unsafe character; refusing to emit a shell-evaluated credential helper" >&2; exit 1 ;;
+esac
+
+BOT_NAME="acme-agent[bot]"
+BOT_EMAIL="<BOT_UID>+acme-agent[bot]@users.noreply.github.com"
+
+# One installation of the App per GitHub account (org or user), so account ->
+# installation id is a total function over the accounts this setup serves.
+# One `account:id` pair per line, account names lowercase. An account absent
+# here gets the personal verdict, never another entry's id: a fallback would
+# mint a *valid* token for the wrong installation, which 404s on the repo
+# instead of failing at auth.
+ORG_INSTALLS="
+acme:REPLACE
+"
+install_id_for_org() {
+  local _line
+  for _line in $ORG_INSTALLS; do
+    case "$_line" in "$1":*) printf '%s' "${_line#*:}"; return 0 ;; esac
+  done
+  return 1
+}
+mapped_orgs() {
+  local _line
+  for _line in $ORG_INSTALLS; do printf '%s ' "${_line%%:*}"; done
+}
+
+# Validate the map before any verdict: a malformed or duplicate entry is a
+# config error that must abort the command, never a silent first-entry win —
+# a typo'd duplicate would mint a *valid* token for the wrong installation.
+# The id shape is allowlisted here because it is emitted inside single quotes
+# below; numeric enforcement (including the unreplaced placeholder) is
+# bot-token's.
+_seen_orgs=""
+for _entry in $ORG_INSTALLS; do
+  case "$_entry" in
+    *:*) ;;
+    *) echo "bot-env: ORG_INSTALLS entry '${_entry}' is not account:id; refusing to run" >&2; exit 1 ;;
+  esac
+  _org="${_entry%%:*}"
+  _id="${_entry#*:}"
+  case "$_org" in
+    ""|*[!a-z0-9-]*) echo "bot-env: ORG_INSTALLS account '${_org}' must be lowercase a-z, 0-9, or -; refusing to run" >&2; exit 1 ;;
+  esac
+  case "$_id" in
+    ""|*[!A-Za-z0-9]*) echo "bot-env: ORG_INSTALLS id for '${_org}' has an unsafe shape; refusing to run" >&2; exit 1 ;;
+  esac
+  case "$_seen_orgs" in
+    *"|${_org}|"*) echo "bot-env: ORG_INSTALLS has a duplicate entry for '${_org}'; refusing to run" >&2; exit 1 ;;
+  esac
+  _seen_orgs="${_seen_orgs}|${_org}|"
+done
+# With zero entries the ambiguous-toward-bot paths would emit a broken rewrite
+# pair (`url.https://github.com//.insteadOf`) and the gate would never match.
+[ -n "$_seen_orgs" ] || { echo "bot-env: ORG_INSTALLS is empty; refusing to run" >&2; exit 1; }
+
+verdict=personal
+ssh_prefixes=""
+matched_orgs=""
+rc=0
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 0 ]; then
+  raw_remotes="$(mktemp)"
+  worktree_remotes="$(mktemp)"
+  trap 'rm -f "$raw_remotes" "$worktree_remotes"' EXIT
+  remote_rc=0
+  git config --local --null --get-regexp '^remote\..*\.(url|pushurl)$' >"$raw_remotes" 2>/dev/null || remote_rc=$?
+  if [ "$remote_rc" -eq 1 ] && [ ! -s "$raw_remotes" ]; then
+    remote_rc=0
+  fi
+  if [ "$remote_rc" -eq 0 ]; then
+    worktree_enabled=""
+    worktree_flag_rc=0
+    worktree_enabled="$(git config --local --bool --get extensions.worktreeConfig 2>/dev/null)" || worktree_flag_rc=$?
+    if [ "$worktree_flag_rc" -eq 0 ] && [ "$worktree_enabled" = true ]; then
+      worktree_rc=0
+      git config --worktree --null --get-regexp '^remote\..*\.(url|pushurl)$' >"$worktree_remotes" 2>/dev/null || worktree_rc=$?
+      if [ "$worktree_rc" -eq 0 ]; then
+        cat "$worktree_remotes" >>"$raw_remotes"
+      elif [ "$worktree_rc" -ne 1 ] || [ -s "$worktree_remotes" ]; then
+        remote_rc="$worktree_rc"
+      fi
+    elif [ "$worktree_flag_rc" -ne 0 ] && [ "$worktree_flag_rc" -ne 1 ]; then
+      remote_rc="$worktree_flag_rc"
+    fi
+  fi
+  if [ "$remote_rc" -eq 0 ]; then
+    if [ ! -s "$raw_remotes" ]; then
+      verdict=bot
+      echo "bot-env: no raw remote URLs in $PWD; ambiguous, using the bot identity" >&2
+    else
+      empty_remote=0
+      while IFS= read -r -d '' remote_record; do
+        case "$remote_record" in
+          *$'\n'*) url="${remote_record#*$'\n'}" ;;
+          *) empty_remote=1; continue ;;
+        esac
+        if [ -z "$url" ]; then
+          empty_remote=1
+          continue
+        fi
+        prefix=""
+        case "$url" in
+          *://*)
+            scheme="${url%%://*}"; rest="${url#*://}"; auth="${rest%%/*}"; host="${auth#*@}"; host="${host%%:*}"; path="${rest#*/}"
+            case "$scheme" in
+              [Hh][Tt][Tt][Pp][Ss]) ;;
+              *) prefix="${scheme}://${auth}/${path%%/*}/" ;;
+            esac
+            ;;
+          *)
+            rest="${url#*@}"; host="${rest%%:*}"; path="${rest#*:}"
+            prefix="${url%%:*}:${path%%/*}/"
+            ;;
+        esac
+        host_lc="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+        org_segment_lc="$(printf '%s' "${path%%/*}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$host_lc" = github.com ] && install_id_for_org "$org_segment_lc" >/dev/null; then
+          verdict=bot
+          case "$matched_orgs" in
+            *"|${org_segment_lc}|"*) ;;
+            *) matched_orgs="${matched_orgs}|${org_segment_lc}|" ;;
+          esac
+          case "$prefix" in
+            "") ;;
+            "git@github.com:${org_segment_lc}/") ;;
+            *"'"*) echo "bot-env: matched remote prefix contains a single quote in $PWD; refusing to run with undetermined identity" >&2; exit 1 ;;
+            *)
+              case "$ssh_prefixes" in
+                *"|${prefix}|"*) ;;
+                *) ssh_prefixes="${ssh_prefixes}|${prefix}|" ;;
+              esac
+              ;;
+          esac
+        fi
+      done <"$raw_remotes"
+      if [ "$empty_remote" -eq 1 ] && [ "$verdict" != bot ]; then
+        verdict=bot
+        echo "bot-env: empty raw remote URL in $PWD; ambiguous, using the bot identity" >&2
+      fi
+    fi
+  else
+    verdict=bot
+    echo "bot-env: raw remote query failed in $PWD; using the bot identity" >&2
+  fi
+elif [ "$rc" -ne 128 ]; then
+  verdict=bot
+  echo "bot-env: git probe failed (exit $rc) in $PWD; ambiguous, using the bot identity" >&2
+fi
+
+if [ "$verdict" != bot ]; then
+  cat <<'EOF'
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+unset GIT_CONFIG_COUNT
+unset GH_TOKEN
+unset BOT_INSTALL_ID
+EOF
+  # In a reused shell, bot-env inherits any exported GIT_CONFIG_* vars, so it
+  # can enumerate exactly what exists and emit portable unset lines for them.
+  for v in $(compgen -v | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+$' || true); do
+    echo "unset $v"
+  done
+  exit 0
+fi
+
+# Installations are per account: two mapped accounts in one repo's remotes
+# would need two different tokens, so there is no single right installation.
+matched_org=""
+n_matched=0
+for o in $(printf '%s' "$matched_orgs" | tr '|' ' '); do
+  n_matched=$((n_matched + 1))
+  matched_org="$o"
+done
+if [ "$n_matched" -gt 1 ]; then
+  echo "bot-env: remotes match more than one mapped account in $PWD; refusing to run with undetermined installation" >&2
+  exit 1
+fi
+
+# The id's emission-safe shape was enforced by the map validation above.
+bot_install_id=""
+if [ -n "$matched_org" ]; then
+  bot_install_id="$(install_id_for_org "$matched_org")"
+fi
+
+# A mint that "succeeds" with empty output is as dangerous as a crash: gh treats
+# an empty GH_TOKEN as unset and falls back to the personal stored credentials.
+# The mint must see the same installation selection the emitted env exports —
+# and never a stale BOT_INSTALL_ID inherited from a previously visited repo.
+if [ -n "$matched_org" ]; then
+  token="$(BOT_INSTALL_ID="$bot_install_id" "$SCRIPT_DIR/bot-token")" || token=""
+else
+  token="$(env -u BOT_INSTALL_ID "$SCRIPT_DIR/bot-token")" || token=""
+fi
+[ -n "$token" ] || token="BOT-TOKEN-MINT-FAILED"
+
+# insteadOf pairs cover the matched account; with no matched account (the
+# ambiguous-toward-bot paths) they cover every mapped account.
+if [ -n "$matched_org" ]; then
+  pair_orgs="$matched_org"
+else
+  pair_orgs="$(mapped_orgs)"
+fi
+first_org="${pair_orgs%% *}"
+rest_orgs="${pair_orgs#"$first_org"}"
+
+cat <<EOF
+export GIT_AUTHOR_NAME='${BOT_NAME}'
+export GIT_AUTHOR_EMAIL='${BOT_EMAIL}'
+export GIT_COMMITTER_NAME='${BOT_NAME}'
+export GIT_COMMITTER_EMAIL='${BOT_EMAIL}'
+export GIT_CONFIG_KEY_0='credential.helper'
+export GIT_CONFIG_VALUE_0=''
+export GIT_CONFIG_KEY_1='credential.helper'
+export GIT_CONFIG_VALUE_1='!${SCRIPT_DIR}/git-credential-bot'
+export GIT_CONFIG_KEY_2='url.https://github.com/${first_org}/.insteadOf'
+export GIT_CONFIG_VALUE_2='git@github.com:${first_org}/'
+export GIT_CONFIG_KEY_3='commit.gpgsign'
+export GIT_CONFIG_VALUE_3='false'
+EOF
+
+idx=4
+for extra_org in $rest_orgs; do
+  cat <<EOF
+export GIT_CONFIG_KEY_${idx}='url.https://github.com/${extra_org}/.insteadOf'
+export GIT_CONFIG_VALUE_${idx}='git@github.com:${extra_org}/'
+EOF
+  idx=$((idx + 1))
+done
+if [ -n "$ssh_prefixes" ]; then
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    cat <<EOF
+export GIT_CONFIG_KEY_${idx}='url.https://github.com/${matched_org}/.insteadOf'
+export GIT_CONFIG_VALUE_${idx}='${p}'
+EOF
+    idx=$((idx + 1))
+  done <<EOF2
+$(printf '%s' "$ssh_prefixes" | tr '|' '\n')
+EOF2
+fi
+
+if [ -n "$matched_org" ]; then
+  echo "export BOT_INSTALL_ID='${bot_install_id}'"
+else
+  echo "unset BOT_INSTALL_ID"
+fi
+cat <<EOF
+export GIT_CONFIG_COUNT=${idx}
+export GH_TOKEN='${token}'
+EOF

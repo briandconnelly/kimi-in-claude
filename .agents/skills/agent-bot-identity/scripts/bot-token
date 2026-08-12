@@ -1,0 +1,58 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pyjwt[crypto]", "httpx"]
+# ///
+import datetime, json, os, sys, tempfile, time
+from pathlib import Path
+import httpx, jwt
+
+APP_ID = "REPLACE"
+# Default installation. An adapter that resolves which account a repo belongs
+# to exports BOT_INSTALL_ID to select a different installation of the same App
+# (installations are per account); when the variable is absent, the default is
+# used. The resolved id must be numeric — this also catches an unreplaced
+# placeholder before it reaches the API or a cache path.
+INSTALL_ID = "REPLACE"
+KEY = Path.home() / ".config/acme-agent/key.pem"
+
+install_id = os.environ.get("BOT_INSTALL_ID") or INSTALL_ID
+if not (install_id.isascii() and install_id.isdecimal()):
+    sys.exit(f"bot-token: installation id {install_id!r} is not numeric; refusing to mint")
+
+# The cache lives apart from the key and the scripts so a sandboxed harness can
+# grant write access to it without also granting write access to key.pem.
+# The cache filename is keyed by every input that changes what the token can
+# reach — today the installation id; tokens minted for different installations
+# must never share a cache entry. A pre-keying token.json is never read.
+CACHE = Path.home() / ".cache/acme-agent" / f"token-{install_id}.json"
+
+if CACHE.exists():
+    try:
+        c = json.loads(CACHE.read_text())
+        if c["exp"] - time.time() > 300:
+            if not c["token"]:  # Never print empty: gh reads it as unset.
+                sys.exit("bot-token: cached token is empty; delete the cache")
+            print(c["token"])
+            sys.exit()
+    except (ValueError, KeyError, TypeError, OSError):
+        pass  # Partial/corrupt cache: treat as a miss and re-mint.
+
+now = int(time.time())
+app_jwt = jwt.encode({"iat": now - 60, "exp": now + 540, "iss": APP_ID}, KEY.read_text(), algorithm="RS256")
+r = httpx.post(
+    f"https://api.github.com/app/installations/{install_id}/access_tokens",
+    headers={"Authorization": f"Bearer {app_jwt}", "Accept": "application/vnd.github+json"},
+    timeout=10,
+)
+r.raise_for_status()
+data = r.json()
+if not data.get("token"):  # Never print empty: gh reads it as unset.
+    sys.exit("bot-token: GitHub returned an empty token")
+exp = datetime.datetime.fromisoformat(data["expires_at"]).timestamp()
+CACHE.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=CACHE.parent, suffix=".tmp")
+with os.fdopen(fd, "w") as f:
+    json.dump({"token": data["token"], "exp": exp}, f)
+os.replace(tmp, CACHE)
+print(data["token"])
