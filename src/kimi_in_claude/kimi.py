@@ -264,6 +264,11 @@ async def run_kimi_exec(
         on_stdout_line=on_event,
         max_output_bytes=config.max_output_bytes(),
         env=build_run_env(reasoning_effort),
+        # kimi's Bash tool spawns each command in its own process group, so a killpg on
+        # timeout/cancel leaves those running (verified on 0.35.0). The stray's command
+        # line embeds this cwd verbatim (`/bin/bash -c cd '<worktree>' && ...`), and every
+        # run gets a unique worktree, so it is a safe and sufficient sweep key.
+        orphan_marker=cwd if len(cwd) >= runtime.MIN_ORPHAN_MARKER_LENGTH else None,
     )
     last_message = _resolve_answer(paths.get("answer"), run.stdout)
     return KimiRunResult(

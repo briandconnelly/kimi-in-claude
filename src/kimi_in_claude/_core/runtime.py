@@ -93,12 +93,140 @@ def _kill_group(proc: subprocess.Popen) -> None:
             proc.kill()
 
 
+# --- Orphan sweep -----------------------------------------------------------------------
+# A process-group kill is not always enough. Some agent CLIs spawn each shell command in
+# its OWN process group, which is then reparented to init, so killing the direct child's
+# group leaves those commands running forever. Verified against kimi-code 0.35.0: after
+# killpg on kimi's group, a `sleep 240` it had started survived with its own pgid and
+# ppid 1.
+#
+# The sweep is a second pass keyed on a caller-supplied marker that the stray's command
+# line embeds verbatim — for this server, the unique per-run worktree path, which appears
+# as `/bin/bash -c cd '<worktree>' && ...`. Kept CLI-agnostic: this module knows only
+# "kill anything whose argv still contains this string".
+#
+# A marker shorter than this cannot be trusted to be unique, and a sweep that matched
+# broadly would kill unrelated processes, so one is refused outright rather than narrowed.
+MIN_ORPHAN_MARKER_LENGTH = 8
+_ORPHAN_SWEEP_GRACE_SECONDS = 2.0
+
+
+def _validate_marker(marker: str) -> None:
+    if not marker or len(marker.strip()) < MIN_ORPHAN_MARKER_LENGTH:
+        raise ValueError(
+            f"orphan marker must be at least {MIN_ORPHAN_MARKER_LENGTH} characters and "
+            "unique enough to identify this run's processes; refusing to sweep on "
+            f"{marker!r}"
+        )
+
+
+def _ps_matches(marker: str) -> list[tuple[int, int]]:
+    """(pid, pgid) for every process whose command line contains `marker`, excluding self.
+
+    Uses `ps` rather than `pgrep -f` because pgrep's self-matching and pattern semantics
+    differ across platforms, and because `ps` output is inspectable in a failure report.
+    Returns [] on any failure — a sweep is best-effort cleanup and must never raise into
+    the caller's error path.
+    """
+    _validate_marker(marker)
+    try:
+        proc = subprocess.run(
+            ["ps", "-axo", "pid=,pgid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - ps always present
+        return []
+    if proc.returncode != 0:  # pragma: no cover - ps failing is not a normal state
+        return []
+
+    self_pid = os.getpid()
+    found: list[tuple[int, int]] = []
+    for line in proc.stdout.splitlines():
+        parts = line.strip().split(maxsplit=2)
+        if len(parts) < 3:
+            continue
+        pid_text, pgid_text, command = parts
+        if marker not in command:
+            continue
+        try:
+            pid, pgid = int(pid_text), int(pgid_text)
+        except ValueError:  # pragma: no cover - ps always emits numeric ids
+            continue
+        # Never our own pid: the marker (a worktree path) legitimately appears in this
+        # server's own argv, and killing ourselves would take down the MCP server.
+        if pid == self_pid:
+            continue
+        found.append((pid, pgid))
+    return found
+
+
+def find_orphans(marker: str) -> list[int]:
+    """PIDs whose command line contains `marker`, excluding this process."""
+    return [pid for pid, _ in _ps_matches(marker)]
+
+
+def _orphan_process_groups(marker: str) -> list[int]:
+    """Process groups to kill for `marker`, never including our own group.
+
+    Killing only the matched pids is NOT enough: a matched process's own children do not
+    carry the marker, so they are stranded with ppid 1 and keep running. Observed live —
+    the sweep killed kimi's marked `bash -c cd '<worktree>' && sleep 300` and left the
+    `sleep` behind, while a marker-only search reported the sweep clean.
+    """
+    self_group = os.getpgrp() if hasattr(os, "getpgrp") else None
+    groups: list[int] = []
+    for _, pgid in _ps_matches(marker):
+        # pgid 0/1 are never a run's own group; killing either would signal far beyond it.
+        if pgid <= 1 or pgid == self_group or pgid in groups:
+            continue
+        groups.append(pgid)
+    return groups
+
+
+def _signal_groups(groups: list[int], sig: int) -> None:
+    for pgid in groups:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(pgid, sig)
+
+
+def sweep_orphans(marker: str, grace_seconds: float = _ORPHAN_SWEEP_GRACE_SECONDS) -> list[int]:
+    """SIGTERM, then SIGKILL, the process GROUPS of anything still matching `marker`.
+
+    Whole groups rather than matched pids: a matched process's children carry no marker of
+    their own and would otherwise be stranded with ppid 1. Returns the pids that matched.
+
+    Call this AFTER `_kill_group` and BEFORE removing the worktree — a surviving writer
+    would otherwise race the removal and can recreate files under a directory being torn
+    down.
+    """
+    _validate_marker(marker)
+    pids = find_orphans(marker)
+    if not pids:
+        return []
+    groups = _orphan_process_groups(marker)
+    _signal_groups(groups, signal.SIGTERM)
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    while time.monotonic() < deadline:
+        if not find_orphans(marker):
+            break
+        time.sleep(0.05)
+    # SIGKILL the groups unconditionally: the marked leader can exit within the grace
+    # period while its unmarked children keep running, so an empty marker search is not
+    # evidence the group is gone (the exact gap this function exists to close).
+    _signal_groups(groups, signal.SIGKILL)
+    return pids
+
+
 def _wait_streaming(  # noqa: PLR0915
     proc: subprocess.Popen,
     stdin_text: str | None,
     on_stdout_line: Callable[[str], None] | None,
     timeout_seconds: int,
     max_output_bytes: int,
+    orphan_marker: str | None = None,
 ) -> tuple[str, str, bool, bool]:
     """Drain stdout/stderr concurrently under independent byte caps, optionally
     calling ``on_stdout_line`` per stdout line. Returns ``(stdout, stderr,
@@ -218,6 +346,12 @@ def _wait_streaming(  # noqa: PLR0915
         # exited and does NOT call os.getpgid (which raises ESRCH on a zombie), so
         # pipe-holding descendants are killed even after the leader exits.
         _kill_group(proc)
+        # A process-group kill does not reach a descendant that made its own group (see
+        # sweep_orphans); without this second pass those keep running after the timeout.
+        if orphan_marker:
+            reclaimed = sweep_orphans(orphan_marker)
+            if reclaimed:
+                logger.warning("reclaimed %d orphaned process(es) after timeout", len(reclaimed))
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=5)
         for t in pumps:
@@ -249,6 +383,7 @@ async def run_async(
     env: dict[str, str] | None = None,
     on_stdout_line: Callable[[str], None] | None = None,
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    orphan_marker: str | None = None,
 ) -> CommandRun:
     """Run `cmd` as a subprocess, returning a CommandRun. Never raises for process
     failures; a missing binary or timeout is reported via the CommandRun fields.
@@ -276,7 +411,14 @@ async def run_async(
     logger.debug("spawned pid=%s cmd=%s timeout=%ss", proc.pid, cmd[0], timeout_seconds)
 
     def _wait() -> tuple[str, str, bool, bool]:
-        return _wait_streaming(proc, stdin_text, on_stdout_line, timeout_seconds, max_output_bytes)
+        return _wait_streaming(
+            proc,
+            stdin_text,
+            on_stdout_line,
+            timeout_seconds,
+            max_output_bytes,
+            orphan_marker=orphan_marker,
+        )
 
     try:
         out, err, timed_out, truncated = await run_sync(_wait, abandon_on_cancel=True)
@@ -290,6 +432,15 @@ async def run_async(
         # race only opens if the process exits naturally at the cancel instant — the same
         # narrow window accepted on the timeout path.
         _kill_group(proc)
+        # Same second pass as the timeout path: a descendant in its own process group
+        # survives the killpg above, and on cancellation nothing else will ever reap it.
+        if orphan_marker:
+            with contextlib.suppress(ValueError):
+                reclaimed = sweep_orphans(orphan_marker)
+                if reclaimed:
+                    logger.warning(
+                        "reclaimed %d orphaned process(es) after cancellation", len(reclaimed)
+                    )
         raise
     elapsed = int((time.monotonic() - start) * 1000)
     if timed_out:
