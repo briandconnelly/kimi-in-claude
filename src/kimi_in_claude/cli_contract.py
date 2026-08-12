@@ -102,6 +102,24 @@ HELP_CACHE_TTL_SECONDS = 300
 READ_ONLY_AGENT_TOOLS = ("Read", "Glob", "Grep")
 READ_ONLY_AGENT_NAME = "kimi-in-claude-readonly"
 
+# WHAT "READ-ONLY" DOES AND DOES NOT MEAN — verified, not assumed.
+#
+# It prevents MUTATION. It does NOT provide confidentiality. The allowlist keeps `Read`,
+# and kimi's Read tool accepts ABSOLUTE paths outside the working directory: a read-only
+# run asked for a file in an unrelated directory returned its contents verbatim. There is
+# no filesystem sandbox underneath, so a prompt-injected repository can make a consult read
+# host files and send them to the configured provider.
+#
+# Say this plainly wherever the tier is described. Calling it a "read-only sandbox" would
+# imply a containment boundary that does not exist.
+READ_ONLY_CONFIDENTIALITY_LIMIT = (
+    "Read-only means Kimi cannot MODIFY anything — it has no shell or write tool. It does "
+    "NOT mean Kimi can only see the workspace: its Read tool accepts absolute paths, so a "
+    "prompt-injected repository could make it read other files on this machine and send "
+    "them to your configured Kimi provider. Do not point it at a workspace whose contents "
+    "you would not hand to that provider."
+)
+
 # --- The file handshake ----------------------------------------------------------------
 # Written inside the worktree, under a single dot-directory kept out of any captured diff.
 HANDSHAKE_DIR_NAME = ".kimi-in-claude"

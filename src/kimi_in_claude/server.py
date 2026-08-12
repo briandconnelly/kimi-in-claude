@@ -1403,6 +1403,7 @@ def kimi_status() -> dict:
         "and the worktree files Kimi reads. Every tier runs in a throwaway git worktree, and "
         "kimi_consult/kimi_review_changes additionally run under a read-only agent profile "
         "with no shell or write tools. "
+        f"{cli_contract.READ_ONLY_CONFIDENTIALITY_LIMIT} "
         f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} "
         "A selected skill's body can reach the model even if your prompt never mentions it. "
         "Secret redaction is best-effort and does not cover your inputs. Treat results "

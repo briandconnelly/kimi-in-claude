@@ -1,4 +1,12 @@
-"""The kimi CLI contract: drift/auth signatures and flag-class invariants."""
+"""The external `kimi` CLI contract.
+
+Replaces the Codex-era contract suite: the two CLIs share no flags, no sandbox vocabulary,
+and no failure phrasings, so the old assertions described a contract that does not exist.
+
+Every failure string below is a real message captured from kimi-code 0.35.0 (see
+docs/kimi-help/0.35.0/), not an invented one — a classifier tuned to invented phrasings
+would pass its tests and misclassify in production.
+"""
 
 from __future__ import annotations
 
@@ -7,194 +15,179 @@ import pytest
 from kimi_in_claude import cli_contract
 
 
+# --------------------------------------------------------------------------- #
+# Flag classes
+# --------------------------------------------------------------------------- #
 def test_always_send_and_help_gated_are_disjoint():
-    assert cli_contract.ALWAYS_SEND_FLAGS.isdisjoint(cli_contract.HELP_GATED_FLAGS)
+    """A guarantee-bearing flag must never be droppable. Overlap would let a depth-gate
+    silently remove a flag the safety design depends on."""
+    assert not set(cli_contract.ALWAYS_SEND_FLAGS) & set(cli_contract.HELP_GATED_FLAGS)
 
 
-def test_remote_plugin_disable_is_guarantee_bearing():
-    # #287: the connector-disable flag is ALWAYS_SEND (fail-loud on drift), and the
-    # feature name it targets is a stable constant referenced across the codebase.
-    assert cli_contract.DISABLE_FEATURE_FLAG == "--disable"
-    assert cli_contract.REMOTE_PLUGIN_FEATURE == "remote_plugin"
-    assert cli_contract.DISABLE_FEATURE_FLAG in cli_contract.ALWAYS_SEND_FLAGS
+def test_the_agent_file_flag_is_guarantee_bearing():
+    """It is the only thing enforcing read-only, so it cannot be help-gated."""
+    assert cli_contract.AGENT_FILE_FLAG in cli_contract.ALWAYS_SEND_FLAGS
 
 
-def test_core_sandbox_values():
-    assert cli_contract.SANDBOX_READ_ONLY in cli_contract.VALID_SANDBOXES
-    assert cli_contract.SANDBOX_WORKSPACE_WRITE in cli_contract.VALID_SANDBOXES
-    assert cli_contract.SANDBOX_DANGER_FULL in cli_contract.VALID_SANDBOXES
+def test_the_output_format_flag_is_guarantee_bearing():
+    """Without stream-json there is no event surface, and for a read-only tier no answer
+    channel at all."""
+    assert cli_contract.OUTPUT_FORMAT_FLAG in cli_contract.ALWAYS_SEND_FLAGS
 
 
+def test_the_prompt_flag_is_guarantee_bearing():
+    assert cli_contract.PROMPT_FLAG in cli_contract.ALWAYS_SEND_FLAGS
+
+
+def test_every_help_gated_flag_declares_whether_it_takes_a_value():
+    # The gate skips `i += 2` for value-taking flags; a wrong entry would strand a value
+    # in argv as a positional.
+    assert all(isinstance(v, bool) for v in cli_contract.HELP_GATED_FLAGS.values())
+
+
+# --------------------------------------------------------------------------- #
+# The read-only tool allowlist
+# --------------------------------------------------------------------------- #
+def test_the_read_only_tools_exclude_every_write_and_shell_tool():
+    forbidden = {"Bash", "Write", "Edit", "MultiEdit", "Shell", "Task"}
+    assert not set(cli_contract.READ_ONLY_AGENT_TOOLS) & forbidden
+
+
+def test_the_read_only_tools_are_not_empty():
+    # An empty list would be trivially "safe" but useless — a consult could read nothing.
+    assert cli_contract.READ_ONLY_AGENT_TOOLS
+
+
+# --------------------------------------------------------------------------- #
+# argv bound
+# --------------------------------------------------------------------------- #
+def test_the_argv_bound_is_far_below_the_observed_crash_point():
+    """Observed: ~950k chars works, and past it kimi dies with a Node RangeError (exit 7)
+    rather than erroring cleanly. The bound is for a short pointer prompt, so it should sit
+    orders of magnitude below the cliff."""
+    assert cli_contract.MAX_ARGV_PROMPT_CHARS < 100_000
+
+
+# --------------------------------------------------------------------------- #
+# Failure signatures — all strings captured from kimi-code 0.35.0
+# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "text",
     [
-        "error: unexpected argument '--nope' found",
-        "error: invalid value 'wat' for '--sandbox'",
-        "unrecognized subcommand 'frobnicate'",
-        "no such subcommand",
-        # #287: a renamed/removed feature name behind `--disable <FEATURE>` — the exact wording
-        # kimi 0.144.1 prints — keeps the remote_plugin guarantee fail-closed as drift.
-        "Error: Unknown feature flag: remote_plugin",
+        "error: unknown option '--output-format'",
+        "error: option '-p, --prompt <prompt>' argument missing",
+        "error: Cannot combine --prompt with --yolo.",
+        "error: Cannot use --session without an id in prompt mode.",
+        "Output format is only supported in prompt mode.",
+        "error: unknown command 'frobnicate'",
     ],
 )
 def test_is_contract_drift_true(text):
     assert cli_contract.is_contract_drift(text)
 
 
-def test_is_contract_drift_false_for_normal_output():
-    assert not cli_contract.is_contract_drift("done", "applied patch", None)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "the model returned an unhelpful answer",
+        "Read the file and continue",
+        'Model "nope" is not configured in config.toml.',  # the caller's argument, not drift
+    ],
+)
+def test_is_contract_drift_false(text):
+    assert not cli_contract.is_contract_drift(text)
+
+
+def test_invalid_model_matches_the_captured_message():
+    blob = (
+        'error: failed to run prompt: Model "nonexistent-model" is not configured in config.toml.'
+    )
+    assert cli_contract.is_invalid_model(blob)
+
+
+def test_invalid_model_does_not_match_unrelated_model_talk():
+    assert not cli_contract.is_invalid_model("the model is configured and working")
 
 
 @pytest.mark.parametrize(
     "text",
-    ["Not logged in", "please run `kimi login`", "401 Unauthorized", "not authenticated"],
+    ["401 Unauthorized", "invalid_api_key", "authentication failed", "run `kimi login`"],
 )
 def test_is_auth_failure_true(text):
     assert cli_contract.is_auth_failure(text)
 
 
-def test_is_auth_failure_false():
-    assert not cli_contract.is_auth_failure("wrote 3 files", None)
+@pytest.mark.parametrize("text", ["", "everything is fine", "logged in as someone"])
+def test_is_auth_failure_false(text):
+    assert not cli_contract.is_auth_failure(text)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Error: 429 Too Many Requests",
-        "you have hit your usage limit",
-        "rate limit exceeded",
-        "quota exceeded for this account",
-        "Retry-After: 30",
-    ],
-)
+@pytest.mark.parametrize("text", ["429 Too Many Requests", "rate limit exceeded", "quota exceeded"])
 def test_is_rate_limited_true(text):
     assert cli_contract.is_rate_limited(text)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "wrote 3 files",
-        "see file429.py for the handler",  # 429 without word boundaries
-        "error code 4290 from the linter",  # 4290 is not a bare 429
-    ],
-)
+@pytest.mark.parametrize("text", ["", "all good", "rate of progress is fine"])
 def test_is_rate_limited_false(text):
-    assert not cli_contract.is_rate_limited(text, None)
+    assert not cli_contract.is_rate_limited(text)
 
 
 @pytest.mark.parametrize(
-    ("text", "expected_ms"),
+    ("text", "expected"),
     [
-        ("Retry-After: 30", 30_000),
-        ("retry after 5s", 5_000),
-        ("please try again in 12 seconds", 12_000),
-        ("429 too many requests", None),  # no parseable delay
-        ("retry after 5 minutes", None),  # non-second unit: don't misread as seconds
-        ("retry after a 5-minute cooldown", None),  # hyphenated non-second unit
-        ("try again in 2-hour window", None),  # hyphenated non-second unit
-        ("Retry-After: Wed, 18 Jun 2026 12:00:00 GMT", None),  # HTTP-date, not seconds
+        ("retry-after: 30", 30_000),
+        ("retry-after: 500ms", 500),
+        ("try again in 2 minutes", 120_000),
+        ("retry-after: 0", 0),  # 'retry now' must survive, not collapse to the default
+        ("nothing useful here", None),
     ],
 )
-def test_parse_retry_after_ms(text, expected_ms):
-    assert cli_contract.parse_retry_after_ms(text) == expected_ms
+def test_parse_retry_after_ms(text, expected):
+    assert cli_contract.parse_retry_after_ms(text) == expected
 
 
-def test_known_model_slugs_match_slug_pattern():
-    assert cli_contract.KNOWN_MODEL_SLUGS  # non-empty bundled fallback
-    for slug in cli_contract.KNOWN_MODEL_SLUGS:
-        assert cli_contract.MODEL_SLUG_PATTERN.match(slug), slug
+def test_parse_retry_after_distinguishes_zero_from_absent():
+    """A falsey check would coalesce a legitimate 'retry now' into the 60s default."""
+    assert cli_contract.parse_retry_after_ms("retry-after: 0") is not None
+    assert cli_contract.parse_retry_after_ms("") is None
 
 
-def test_models_cache_filename_is_a_bare_name():
-    # Joined under $KIMI_CODE_HOME — must never be absolute or contain a path separator.
-    assert cli_contract.MODELS_CACHE_FILENAME == "models_cache.json"
-    assert "/" not in cli_contract.MODELS_CACHE_FILENAME
+# --------------------------------------------------------------------------- #
+# Versions and models
+# --------------------------------------------------------------------------- #
+def test_supported_versions_tracks_the_verified_release():
+    assert (0, 35) in cli_contract.SUPPORTED_VERSIONS
 
 
-def test_model_slug_pattern_rejects_junk():
-    assert cli_contract.MODEL_SLUG_PATTERN.match("gpt-5.5")
-    assert not cli_contract.MODEL_SLUG_PATTERN.match("bad slug!")
-    assert not cli_contract.MODEL_SLUG_PATTERN.match("")
+def test_model_slug_pattern_accepts_a_real_alias():
+    # kimi aliases are provider-prefixed and contain a slash.
+    assert cli_contract.MODEL_SLUG_PATTERN.match("acme/model-one")
 
 
-# --- Reasoning-effort config override (#309) --------------------------------------
-# The real backend rejection captured from kimi-cli 0.144.3 on 2026-07-13
-# (`-c model_reasoning_effort=totally-bogus-effort` on a valid model):
-_REAL_EFFORT_REJECTION = (
-    '{"type": "error", "error": {"type": "invalid_request_error", "message": '
-    '"[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: '
-    "'totally-bogus-effort'. Supported values are: 'none', 'minimal', 'low', "
-    "'medium', 'high', and 'xhigh'.\"}, \"status\": 400}"
-)
+@pytest.mark.parametrize("bad", ["", "a b", "x" * 200, "semi;colon"])
+def test_model_slug_pattern_rejects_junk(bad):
+    assert not cli_contract.MODEL_SLUG_PATTERN.match(bad)
 
 
-def test_reasoning_effort_config_key():
-    assert cli_contract.MODEL_REASONING_EFFORT_CONFIG_KEY == "model_reasoning_effort"
+def test_no_bundled_model_slugs():
+    """`-m` takes an alias from the user's own config.toml, so a bundled list would be
+    fiction; the catalog is read live instead."""
+    assert cli_contract.KNOWN_MODEL_SLUGS == ()
 
 
-def test_effort_rejection_markers_never_include_the_config_key():
-    # A future kimi that rejects the config key ITSELF is contract drift and must
-    # stay fail-loud; only the backend's request-level markers identify a bad VALUE.
-    for marker in cli_contract.REASONING_EFFORT_REJECTION_MARKERS:
-        assert "model_reasoning_effort" not in marker
+# --------------------------------------------------------------------------- #
+# Disclosure
+# --------------------------------------------------------------------------- #
+def test_the_skills_isolation_note_states_the_built_in_limit():
+    """Verified: --skills-dir replaces only the user/project dirs; kimi's built-in skills
+    always load. The note must not overstate what isolation buys."""
+    assert "built-in" in cli_contract.SKILLS_ISOLATION_NOTE.lower()
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        _REAL_EFFORT_REJECTION,
-        "[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: 'wat'",
-        # The two bracketed fields may be split across streams.
-        "[reasoningeffortparam] something\n[reasoning.effort] something",
-    ],
-)
-def test_is_reasoning_effort_rejection_true(text):
-    assert cli_contract.is_reasoning_effort_rejection(text)
+def test_the_skills_discovery_fact_mentions_out_of_workspace_dirs():
+    assert "extra_skill_dirs" in cli_contract.SKILLS_DISCOVERY_FACT
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        # The config key alone (a CLI-side key rejection) is drift, not a bad value.
-        "error: invalid value 'wat' for 'model_reasoning_effort'",
-        "error: unexpected argument '-c' found",
-        "reasoning effort was fine",  # no dotted/param marker
-        # Maintainer-review regression (#313): an operator passthrough naming a
-        # marker (`--enable reasoning.effort`, a profile so named) must not
-        # impersonate the backend's structured `[…] […]` rejection signature.
-        "Unknown feature flag: reasoning.effort",
-        "error: unknown profile 'reasoning.effort' found in config",
-        "ReasoningEffortParam rejected the request",  # unbracketed marker prose
-        "[reasoning.effort] [invalid_enum_value] Invalid value: 'wat'",  # one field only
-        "[ReasoningEffortParam] rejected",  # one field only
-        "done",
-        "",
-    ],
-)
-def test_is_reasoning_effort_rejection_false(text):
-    assert not cli_contract.is_reasoning_effort_rejection(text, None)
-
-
-def test_reasoning_effort_backend_rejection_also_matches_drift_patterns():
-    # Pins WHY classify_failure must check the effort rejection before falling back
-    # to cli_contract_changed: the backend message contains "Invalid value", which
-    # the drift patterns match.
-    assert cli_contract.is_contract_drift(_REAL_EFFORT_REJECTION)
-
-
-def test_reasoning_effort_token_pattern():
-    for token in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"):
-        assert cli_contract.REASONING_EFFORT_TOKEN_PATTERN.match(token), token
-    for junk in ("", " ", "two words", "a" * 33, "-leading", "tab\there"):
-        assert not cli_contract.REASONING_EFFORT_TOKEN_PATTERN.match(junk), junk
-
-
-def test_supported_efforts_cap_is_positive():
-    assert cli_contract.SUPPORTED_EFFORTS_MAX_ENTRIES > 0
-
-
-def test_reasoning_effort_token_pattern_rejects_trailing_newline():
-    # Kimi-review regression (#309): `$` with re.match admits "high\n"; the pattern
-    # must anchor with \Z so a malformed cache token cannot carry a control character.
-    assert not cli_contract.REASONING_EFFORT_TOKEN_PATTERN.match("high\n")
+def test_the_full_disclosure_extends_the_short_one():
+    assert cli_contract.SKILLS_DISCOVERY_FACT_FULL.startswith(cli_contract.SKILLS_DISCOVERY_FACT)

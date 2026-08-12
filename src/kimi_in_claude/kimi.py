@@ -20,8 +20,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from stat import S_ISREG
 from typing import TYPE_CHECKING
 
 from kimi_in_claude import cli_contract, config, normalize, preflight
@@ -170,38 +173,77 @@ def build_run_env(reasoning_effort: str | None) -> dict[str, str]:
     return env
 
 
+def _write_exclusive(path: Path, text: str) -> None:
+    """Create `path` and write `text`, refusing to follow a symlink or reuse an existing file.
+
+    O_EXCL|O_NOFOLLOW is the whole point: the handshake directory is created fresh by this
+    process, so anything already at the target is an attacker's plant, not our file.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def create_handshake_dir() -> str:
+    """A fresh, private, server-owned directory for one run's handshake files.
+
+    Deliberately NOT inside the worktree. The worktree is seeded from repository content,
+    so a repo that tracks `.kimi-in-claude` as a symlink would redirect these writes outside
+    the tree — verified: with such a symlink checked out, the prompt and agent files landed
+    in the symlink's target. Worse, an agent file redirected to /dev/null would present kimi
+    with an empty profile, which may silently fall back to the unrestricted default and
+    void the read-only guarantee.
+
+    Placing the directory outside the repository removes repository control over the path
+    entirely. kimi reads the files by absolute path, which works because its Read tool
+    accepts absolute paths (verified on 0.35.0).
+    """
+    return tempfile.mkdtemp(prefix="kic-handshake-")
+
+
 def write_handshake(run_dir: str, prompt_text: str, *, read_only: bool) -> dict[str, str]:
-    """Write the per-run handshake files into `run_dir` and return their paths.
+    """Write one run's handshake files into `run_dir` and return their ABSOLUTE paths.
+
+    `run_dir` must be a server-owned directory from `create_handshake_dir`, never a path
+    under the worktree — see that function for the symlink attack this avoids.
 
     Returns keys: prompt (always), answer (propose tier only), agent (read-only tier only).
     The answer file is only meaningful when the run has a Write tool, so it is not offered
     to a read-only run — that tier recovers its answer from the event stream instead.
     """
-    base = Path(run_dir) / cli_contract.HANDSHAKE_DIR_NAME
+    base = Path(run_dir)
     base.mkdir(parents=True, exist_ok=True)
     paths: dict[str, str] = {}
 
     prompt_path = base / cli_contract.PROMPT_FILE_NAME
-    prompt_path.write_text(prompt_text, encoding="utf-8")
+    _write_exclusive(prompt_path, prompt_text)
     paths["prompt"] = str(prompt_path)
 
     if read_only:
         agent_path = base / "readonly-agent.md"
-        agent_path.write_text(read_only_agent_document(), encoding="utf-8")
+        _write_exclusive(agent_path, read_only_agent_document())
+        # Read the profile back before launching. The agent file is the ONLY thing enforcing
+        # read-only, so shipping one whose bytes we have not confirmed would make the
+        # guarantee unverified at exactly the moment it matters.
+        if agent_path.read_text(encoding="utf-8") != read_only_agent_document():
+            raise ValueError("read-only agent file did not read back as written")
         paths["agent"] = str(agent_path)
     else:
         paths["answer"] = str(base / cli_contract.ANSWER_FILE_NAME)
     return paths
 
 
-def build_prompt_pointer(*, read_only: bool) -> str:
-    """The short argv prompt pointing kimi at the handshake files."""
-    rel = f"{cli_contract.HANDSHAKE_DIR_NAME}/{cli_contract.PROMPT_FILE_NAME}"
+def build_prompt_pointer(paths: dict[str, str], *, read_only: bool) -> str:
+    """The short argv prompt pointing kimi at the handshake files by absolute path."""
+    prompt = paths["prompt"]
     if read_only:
-        return f"Read {rel} and follow it exactly. Reply with your answer as your final message."
-    answer = f"{cli_contract.HANDSHAKE_DIR_NAME}/{cli_contract.ANSWER_FILE_NAME}"
+        return (
+            f"Read the file {prompt} and follow it exactly. "
+            "Reply with your answer as your final message."
+        )
     return (
-        f"Read {rel} and follow it exactly. When you are done, write your final answer to {answer}."
+        f"Read the file {prompt} and follow it exactly. "
+        f"When you are done, write your final answer to {paths['answer']}."
     )
 
 
@@ -244,36 +286,76 @@ async def run_kimi_exec(
             f"{json.dumps(output_schema, indent=2)}\n"
         )
 
-    paths = write_handshake(cwd, prompt_text, read_only=read_only)
-    cmd, dropped = build_exec_command(
-        cwd=cwd,
-        sandbox=sandbox,
-        isolation=isolation,
-        prompt_pointer=build_prompt_pointer(read_only=read_only),
-        model=model,
-        agent_file_path=paths.get("agent"),
-        skills_dir=config.skills_dir_for(isolation),
-        extra_args=config.extra_args().tokens,
-        flag_support=flag_support,
-    )
-    run = await runtime.run_async(
-        cmd,
-        cwd=cwd,
-        timeout_seconds=timeout_seconds,
-        stdin_text=None,
-        on_stdout_line=on_event,
-        max_output_bytes=config.max_output_bytes(),
-        env=build_run_env(reasoning_effort),
-        # kimi's Bash tool spawns each command in its own process group, so a killpg on
-        # timeout/cancel leaves those running (verified on 0.35.0). The stray's command
-        # line embeds this cwd verbatim (`/bin/bash -c cd '<worktree>' && ...`), and every
-        # run gets a unique worktree, so it is a safe and sufficient sweep key.
-        orphan_marker=cwd if len(cwd) >= runtime.MIN_ORPHAN_MARKER_LENGTH else None,
-    )
-    last_message = _resolve_answer(paths.get("answer"), run.stdout)
+    handshake_dir = create_handshake_dir()
+    try:
+        paths = write_handshake(handshake_dir, prompt_text, read_only=read_only)
+        cmd, dropped = build_exec_command(
+            cwd=cwd,
+            sandbox=sandbox,
+            isolation=isolation,
+            prompt_pointer=build_prompt_pointer(paths, read_only=read_only),
+            model=model,
+            agent_file_path=paths.get("agent"),
+            skills_dir=config.skills_dir_for(isolation),
+            extra_args=config.extra_args().tokens,
+            flag_support=flag_support,
+        )
+        run = await runtime.run_async(
+            cmd,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            stdin_text=None,
+            on_stdout_line=on_event,
+            max_output_bytes=config.max_output_bytes(),
+            env=build_run_env(reasoning_effort),
+            # kimi's Bash tool spawns each command in its own process group, so a killpg on
+            # timeout/cancel leaves those running (verified on 0.35.0). The stray's command
+            # line embeds this cwd verbatim (`/bin/bash -c cd '<worktree>' && ...`), and
+            # every run gets a unique worktree, so it is a safe and sufficient sweep key.
+            orphan_marker=cwd if len(cwd) >= runtime.MIN_ORPHAN_MARKER_LENGTH else None,
+        )
+        last_message = _resolve_answer(paths.get("answer"), run.stdout)
+    finally:
+        # Always: the prompt file can carry the gathered diff, and the answer file whatever
+        # kimi wrote. Neither should outlive the run on disk.
+        shutil.rmtree(handshake_dir, ignore_errors=True)
     return KimiRunResult(
         run=run, last_message=last_message, events=run.stdout, dropped_flags=dropped
     )
+
+
+# The answer file is written by a full-tool agent, so its path is model-controlled at the
+# moment we read it. Bound the read: a symlink to /dev/zero, a FIFO, or a huge file would
+# otherwise hang the server or exhaust memory, and a symlink to a host file would launder
+# arbitrary content into the result.
+MAX_ANSWER_BYTES = 1_000_000
+
+
+def _read_answer_file(answer_path: str) -> str:
+    """Read the answer file safely, or return "" if it is anything but a plain small file."""
+    try:
+        # O_NONBLOCK is load-bearing, not defensive: opening a FIFO for reading BLOCKS
+        # until a writer appears, which would hang before fstat could reject it — the very
+        # denial of service this function exists to prevent. O_NOFOLLOW rejects a
+        # substituted symlink.
+        fd = os.open(answer_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        # ELOOP (a symlink was substituted), ENOENT, or a permissions problem.
+        return ""
+    try:
+        stat = os.fstat(fd)
+        # Regular files only: a FIFO or device would block the read indefinitely.
+        if not S_ISREG(stat.st_mode) or stat.st_size > MAX_ANSWER_BYTES:
+            return ""
+        raw = os.read(fd, MAX_ANSWER_BYTES)
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
+    try:
+        return raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", "replace").strip()
 
 
 def _resolve_answer(answer_path: str | None, events: str) -> str | None:
@@ -284,10 +366,7 @@ def _resolve_answer(answer_path: str | None, events: str) -> str | None:
     success.
     """
     if answer_path:
-        try:
-            text = Path(answer_path).read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            text = ""
+        text = _read_answer_file(answer_path)
         if text:
             return text
     return normalize.extract_final_message(events)

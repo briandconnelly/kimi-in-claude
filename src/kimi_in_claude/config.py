@@ -167,74 +167,42 @@ ENV_PLACEHOLDER_REPAIR = (
 # prompt, hollowing out the fail-loud CLI contract.
 EXTRA_ARGS_ENV = f"{ENV_PREFIX}EXTRA_ARGS"
 
-# The allowlisted global options — all value-taking, and all verified `kimi` global+exec options
-# (re-probed against kimi-cli 0.147.0 on 2026-08-07: every form below parses, while a bare or
-# unknown flag is rejected as `unexpected argument`). THIS parser accepts short `-c`/`-p` only
-# space-separated — the attached `-cKEY=VAL` is refused here as an unknown flag, because the
-# attached-form split below fires only on long `--flag=value`. That is a deliberate narrowing of
-# ours, NOT a CLI limit: kimi itself accepts `-cKEY=VAL` (clap's attached short-option value),
-# re-probed on both 0.146.0 and 0.147.0 on 2026-08-07. The narrowing is safe-direction — we pass
-# through strictly less than kimi would take — so keep it, but do not restate it as a kimi fact.
-# The long forms accept both `--config VAL` and `--config=VAL`.
-_EXTRA_CONFIG_FLAGS = ("-c", "--config")  # -c KEY=VALUE  (a dotted-path config override)
-_EXTRA_PROFILE_FLAGS = ("-p", "--profile")  # -p NAME       (layer a named config profile)
-_EXTRA_FEATURE_FLAGS = ("--enable", "--disable")  # --enable/--disable FEATURE
+# --- KIMI_IN_CLAUDE_EXTRA_ARGS -----------------------------------------------------------
+# There is currently NO safe operator passthrough for kimi, so the allowlist is empty and
+# any configured value is refused with an explanation.
+#
+# This is a deliberate narrowing from the Codex original, whose allowlist (`-c KEY=VALUE`,
+# `-p NAME`, `--enable/--disable FEATURE`) does not merely fail to apply here — it is
+# actively dangerous, because kimi reuses those short flags for different things:
+#
+#   -p  is kimi's PROMPT flag (a passthrough `-p foo` would append a second prompt after
+#       the plugin's own, overriding the run's actual instructions)
+#   -c  is kimi's --continue (it would resume a previous session for the working
+#       directory instead of running the isolated one this server constructed)
+#
+# kimi has no `-c KEY=VALUE` config override, no `--profile`, and no feature flags, so
+# nothing is lost by refusing. Every other kimi global option is either plugin-owned
+# (-p/--output-format/--agent-file/-m/--skills-dir), isolation-defeating (--add-dir), or
+# rejected by kimi in prompt mode anyway (-y/--auto/--plan/--session/--continue).
+#
+# The machinery is kept rather than deleted: it is the natural place to re-open a
+# passthrough if kimi grows one, and keeping it means a configured value fails loudly
+# instead of being silently ignored.
+_EXTRA_CONFIG_FLAGS: tuple[str, ...] = ()
+_EXTRA_PROFILE_FLAGS: tuple[str, ...] = ()
+_EXTRA_FEATURE_FLAGS: tuple[str, ...] = ()
+_PLUGIN_OWNED_FEATURES: frozenset[str] = frozenset()
+_DENIED_CONFIG_KEYS: frozenset[str] = frozenset()
+_DENIED_CONFIG_KEY_ROOTS: frozenset[str] = frozenset()
+_RESERVED_META_CONFIG_KEYS: dict[str, tuple[str, str, str, str]] = {}
 
-# Feature NAMES that are wholly plugin-owned, refused even though `--enable`/`--disable`/`-c`
-# are allowlisted: the plugin disables the remote_plugin connectors on every model-bearing call
-# as a documented security guarantee (#287), so an operator override must not touch the feature
-# in EITHER direction. `--enable` would defeat the guarantee; `--disable` is redundant with the
-# plugin but, if allowed, injects a passthrough descriptor that could misattribute a plugin-owned
-# guarantee-flag drift to KIMI_IN_CLAUDE_EXTRA_ARGS — so both are refused. `--enable X` is exactly
-# `-c features.X=true`, so the `-c` spellings are denied too (see _DENIED_CONFIG_KEYS below). NOTE:
-# an opaque `--profile` can still re-enable it — the same documented operator-trust boundary that
-# bounds the `-c` denials (see COMPATIBILITY.md).
-_PLUGIN_OWNED_FEATURES = frozenset({cli_contract.REMOTE_PLUGIN_FEATURE})
-# Both the dotted key AND the bare `features` parent table are refused: `-c
-# features={remote_plugin=true}` (a TOML inline table) reaches the same setting through the
-# parent key, so denying only the dotted form leaves that inline-table bypass open. Denying
-# bare `features` refuses the whole-table inline form; a different feature is still settable
-# via its own dotted key (`-c features.some_other=true`), which is NOT in this set.
-_FEATURES_NAMESPACE = "features"
-_DENIED_CONFIG_KEYS = frozenset(
-    {_FEATURES_NAMESPACE, f"{_FEATURES_NAMESPACE}.{cli_contract.REMOTE_PLUGIN_FEATURE}"}
+NO_PASSTHROUGH_REASON = (
+    "kimi has no safe passthrough option: it exposes no config-override, profile, or "
+    "feature flags, and its remaining global options are either owned by this plugin, "
+    "would defeat worktree isolation, or are rejected in prompt mode. Note that -p and -c "
+    "mean PROMPT and CONTINUE in kimi, not profile and config. Unset "
+    f"{EXTRA_ARGS_ENV}."
 )
-
-# Config-key roots refused even though `-c/--config` is allowlisted: a `-c` value can
-# override ANY dotted config path, and these would weaken a guarantee this server
-# advertises — the sandbox capability boundary and the no-network-egress promise
-# (sandbox_workspace_write.network_access lives under `sandbox`), the approval posture,
-# or the host-env isolation of commands kimi runs (shell_environment_policy.inherit
-# could expose the server's environment, secrets included). Refused at parse time so
-# they never reach kimi. NOTE: `--profile` layers an opaque on-disk TOML this parser
-# cannot inspect, so a profile remains a documented operator-trust boundary (see
-# COMPATIBILITY.md); this denylist covers only the inspectable `-c` surface.
-_DENIED_CONFIG_KEY_ROOTS = frozenset({"sandbox", "approval_policy", "shell_environment_policy"})
-
-# Config keys refused because they would contradict provenance the result envelope reports
-# (#310, #309): each has first-class, meta-reported controls — a per-call parameter and a
-# KIMI_IN_CLAUDE_* env default — which flow into resolved_defaults and the named meta field.
-# A passthrough `-c model=…` (or `-c model_reasoning_effort=…`) would run on the operator's
-# value while the meta field still reports the per-call/server value (null in the common
-# case). Deliberately EXACT keys, not a new root in _DENIED_CONFIG_KEY_ROOTS: the root
-# machinery's `model_` prefix match would also refuse `model_provider` — the passthrough's
-# motivating use case (#231, above) — and `model_verbosity`, which stay allowed. The check
-# runs on the normalized key, so it also refuses lookalike spellings (`Model`, quoted
-# segments) that kimi's own `-c` parser — a naive '.'-split with literal, case-sensitive
-# segments — would treat as junk keys rather than the real key: deliberate, harmless
-# over-denial matching the #287 treatment. NOTE: an opaque `--profile` can still set these —
-# the same documented operator-trust boundary that bounds every `-c` denial
-# (COMPATIBILITY.md). Values are (meta field, env var, per-call parameter, issue) used to
-# build the value-free refusal message.
-_RESERVED_META_CONFIG_KEYS: dict[str, tuple[str, str, str, str]] = {
-    "model": ("meta.model", f"{ENV_PREFIX}MODEL", "model", "#310"),
-    cli_contract.MODEL_REASONING_EFFORT_CONFIG_KEY: (
-        "meta.reasoning_effort",
-        f"{ENV_PREFIX}REASONING_EFFORT",
-        "reasoning_effort",
-        "#309",
-    ),
-}
 
 
 @dataclass(frozen=True)
@@ -310,7 +278,10 @@ def _parse_extra_args(raw: str) -> ExtraArgs:
             flag = tok
         kind = _extra_args_flag_kind(flag)
         if kind is None:
-            return ExtraArgs(configured=True, error=f"unsupported argument: {_safe_token(tok)}")
+            return ExtraArgs(
+                configured=True,
+                error=f"unsupported argument: {_safe_token(tok)} — {NO_PASSTHROUGH_REASON}",
+            )
         if not attached:
             if i + 1 >= len(toks):
                 return ExtraArgs(configured=True, error=f"{flag} requires a value")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -76,18 +77,6 @@ def test_clamp_timeout():
     assert config.clamp_timeout(120) == 120
 
 
-@pytest.mark.parametrize(
-    "iso,expected",
-    [
-        ("inherit", []),
-        ("ignore-config", ["--ignore-user-config"]),
-        ("ignore-rules", ["--ignore-user-config", "--ignore-rules"]),
-    ],
-)
-def test_isolation_flags(iso, expected):
-    assert config.isolation_flags(iso) == expected
-
-
 def test_isolation_flags_invalid():
     with pytest.raises(ValueError, match="unsupported isolation"):
         config.isolation_flags("nope")
@@ -115,7 +104,7 @@ def test_placeholder_env_vars(clean_env):
 
 @pytest.mark.parametrize(
     "version,expected",
-    [("kimi-cli 0.147.0", True), ("kimi-cli 0.999.0", False), ("garbage", None), (None, None)],
+    [("0.35.0", True), ("0.99.0", False), ("garbage", None), (None, None)],
 )
 def test_version_supported(version, expected, clean_env):
     assert config.version_supported(version) is expected
@@ -124,12 +113,12 @@ def test_version_supported(version, expected, clean_env):
 def test_supported_versions_env_override(clean_env):
     clean_env.setenv("KIMI_IN_CLAUDE_SUPPORTED_VERSIONS", "0.999")
     assert config.version_supported("kimi-cli 0.999.3") is True
-    assert config.version_supported("kimi-cli 0.147.0") is False
+    assert config.version_supported("0.35.0") is False
 
 
 def test_supported_versions_bad_env_falls_back(clean_env):
     clean_env.setenv("KIMI_IN_CLAUDE_SUPPORTED_VERSIONS", "garbage")
-    assert config.version_supported("kimi-cli 0.147.0") is True
+    assert config.version_supported("0.35.0") is True
 
 
 def test_state_dir_default(clean_env, monkeypatch):
@@ -239,44 +228,6 @@ def test_extra_args_blank_is_unconfigured(monkeypatch):
     assert ea.tokens == ()
 
 
-def test_extra_args_config_and_profile(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c model_provider=litellm --profile work")
-    ea = config.extra_args()
-    assert ea.valid is True
-    assert ea.tokens == ("-c", "model_provider=litellm", "--profile", "work")
-    assert ea.option_count == 2
-    # descriptors are the safe config flag+KEY + profile flag/name; never the -c value.
-    assert "model_provider" in ea.descriptors
-    assert "-c" in ea.descriptors  # the flag itself, so a flag-token drift is attributable
-    assert "--profile" in ea.descriptors
-    assert "work" in ea.descriptors
-    assert "litellm" not in ea.descriptors
-
-
-def test_extra_args_attached_long_forms(monkeypatch):
-    monkeypatch.setenv(
-        "KIMI_IN_CLAUDE_EXTRA_ARGS", "--config=model_provider=x --enable=foo --disable=bar"
-    )
-    ea = config.extra_args()
-    assert ea.valid is True
-    assert ea.tokens == (
-        "--config",
-        "model_provider=x",
-        "--enable",
-        "foo",
-        "--disable",
-        "bar",
-    )
-    assert ea.option_count == 3
-
-
-def test_extra_args_short_profile(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-p work")
-    ea = config.extra_args()
-    assert ea.valid is True
-    assert ea.tokens == ("-p", "work")
-
-
 def test_extra_args_unbalanced_quotes_invalid(monkeypatch):
     monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", '-c "model_provider=x')
     ea = config.extra_args()
@@ -299,41 +250,10 @@ def test_extra_args_rejects_bare_positional(monkeypatch):
     assert ea.valid is False
 
 
-def test_extra_args_rejects_missing_value(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c")
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "requires a value" in ea.error
-
-
-def test_extra_args_rejects_config_without_equals(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c model_provider")
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "KEY=VALUE" in ea.error
-
-
-def test_extra_args_rejects_value_that_looks_like_flag(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--profile --sandbox")
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "looks like a flag" in ea.error
-
-
 def test_extra_args_rejects_attached_short_form(monkeypatch):
     monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-cmodel_provider=x")
     ea = config.extra_args()
     assert ea.valid is False
-
-
-def test_extra_args_denies_sandbox_key(monkeypatch):
-    monkeypatch.setenv(
-        "KIMI_IN_CLAUDE_EXTRA_ARGS",
-        "-c sandbox_workspace_write.network_access=true",
-    )
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "refused" in ea.error
 
 
 def test_extra_args_denies_approval_policy_key(monkeypatch):
@@ -353,18 +273,6 @@ def test_extra_args_error_never_echoes_secret_value(monkeypatch):
     assert "sk-supersecretvalue" not in (ea.error or "")
 
 
-def test_extra_args_denies_sandbox_key_with_leading_whitespace(monkeypatch):
-    # Regression (#231 review): kimi trims the -c key, so a leading space must not
-    # let a security-sensitive key slip past the denylist.
-    monkeypatch.setenv(
-        "KIMI_IN_CLAUDE_EXTRA_ARGS",
-        '-c " sandbox_workspace_write.network_access=true"',
-    )
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "refused" in ea.error
-
-
 def test_extra_args_denies_sandbox_key_with_space_around_dot(monkeypatch):
     monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", '-c "sandbox_mode =danger-full-access"')
     ea = config.extra_args()
@@ -379,110 +287,12 @@ def test_extra_args_denies_shell_environment_policy_key(monkeypatch):
 
 
 # --- #312: quoted-root spellings may not pass the security root denylist --------------
-@pytest.mark.parametrize(
-    "raw",
-    [
-        # Quoted TOML root segments that SURVIVE shlex (single-quoted whole value preserves
-        # the inner double-quotes). In kimi these are junk keys its config never reads
-        # (its -c parser is literal — no quote stripping), so they were silently-accepted
-        # no-ops, not a sandbox bypass; refusing them anyway gives the operator feedback
-        # and keeps the root denial as conservative as the exact-key denials (#287).
-        "-c '\"sandbox_workspace_write\".network_access=true'",
-        "-c '\"shell_environment_policy\".inherit=all'",
-        "-c '\"approval_policy\"=never'",
-        "-c '\"sandbox_mode\"=danger-full-access'",
-        "-c '\" Sandbox_Workspace_Write \".network_access=true'",  # quotes + whitespace + case
-    ],
-)
-def test_extra_args_denies_quoted_root_spellings(monkeypatch, raw):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raw)
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "refused" in ea.error
-
-
-def test_extra_args_allows_quoted_root_of_permitted_key(monkeypatch):
-    # The quoted-root canonicalization must not widen the denylist: a quoted root that
-    # normalizes to a PERMITTED key stays allowed (kimi will treat it as a junk key,
-    # which is the operator's business — only guarantee-relevant roots are refused).
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c '\"model_provider\"=azure'")
-    ea = config.extra_args()
-    assert ea.valid is True
 
 
 # --- #287: an operator may not re-enable the remote_plugin connectors -----------------
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "--enable remote_plugin",  # feature spelling, spaced
-        "--enable=remote_plugin",  # feature spelling, attached
-        "--enable Remote_Plugin",  # case-insensitive
-        "-c features.remote_plugin=true",  # config spelling (== --enable)
-        "--config features.remote_plugin=true",  # long config flag
-        "--config=features.remote_plugin=true",  # attached long config flag
-        "-c features.remote_plugin=false",  # any assignment refused, not just =true
-        '-c " features . Remote_Plugin =true"',  # whitespace/case around the dotted key
-        "-c features={remote_plugin=true}",  # TOML inline table via the bare parent key
-        '-c "features = {remote_plugin = true}"',  # inline table with whitespace
-        # `--disable remote_plugin` is refused too — the feature is wholly plugin-owned, and
-        # allowing the redundant flag would let a plugin-guarantee-flag drift be misattributed
-        # to the operator's passthrough (#287 review).
-        "--disable remote_plugin",
-        # Quoted TOML key segments that SURVIVE shlex (single-quoted whole value preserves
-        # the inner double-quotes). In kimi these are junk keys, NOT aliases of
-        # features.remote_plugin — its -c parser is literal (no quote stripping, verified
-        # against config_override.rs at rust-v0.144.3) — so denying them is conservative
-        # over-matching, not a mirror of kimi's resolution (#312).
-        "-c 'features.\"remote_plugin\"=true'",
-        "-c '\"features\".remote_plugin=true'",
-    ],
-)
-def test_extra_args_denies_remote_plugin_reenable(monkeypatch, raw):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raw)
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "remote_plugin" in (ea.error or "")
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "--enable some_other_feature",  # a different feature is unaffected
-        "--disable some_other_feature",  # disabling a different feature is fine
-        "-c features.some_other=true",  # a different features.* key is unaffected
-    ],
-)
-def test_extra_args_allows_non_plugin_owned_features(monkeypatch, raw):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raw)
-    ea = config.extra_args()
-    assert ea.valid is True
 
 
 # --- #310: `model` is reserved for the first-class, meta-reported controls ------------
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "-c model=gpt-5-kimi",  # short config flag
-        "--config model=gpt-5-kimi",  # long config flag
-        "--config=model=gpt-5-kimi",  # attached long config flag
-        '-c " model =gpt-5-kimi"',  # whitespace around the key (kimi trims the whole key)
-        # Lookalike spellings, conservatively refused: kimi's -c parser is a naive
-        # '.'-split with literal, case-sensitive segments (no quote stripping — verified
-        # against kimi-rs 0.144.3 config_override.rs), so `Model` and `"model"` would be
-        # junk keys kimi never reads, not aliases of `model`. Denying them anyway costs
-        # nothing and matches the #287 Remote_Plugin/quoted-segment treatment.
-        "-c Model=gpt-5-kimi",
-        "-c '\"model\"=gpt-5-kimi'",  # escaped quotes survive shlex
-    ],
-)
-def test_extra_args_reserves_model_key(monkeypatch, raw):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raw)
-    ea = config.extra_args()
-    assert ea.valid is False
-    # The refusal must point the operator at the first-class replacements.
-    assert "KIMI_IN_CLAUDE_MODEL" in ea.error
-    # The -c VALUE is never echoed in an error envelope.
-    assert "gpt-5-kimi" not in ea.error
 
 
 def test_extra_args_model_denial_is_not_the_remote_plugin_message(monkeypatch):
@@ -495,53 +305,7 @@ def test_extra_args_model_denial_is_not_the_remote_plugin_message(monkeypatch):
     assert "sandbox" not in ea.error
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "-c model_provider=azure",  # the passthrough's motivating use case (#231)
-        "-c model_providers.x.base_url=http://localhost:8000/v1",  # provider table
-        "-c model_verbosity=low",  # any other model_* key stays allowed
-    ],
-)
-def test_extra_args_allows_other_model_keys(monkeypatch, raw):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raw)
-    ea = config.extra_args()
-    assert ea.valid is True
-
-
 # --- #309: `model_reasoning_effort` joins `model` in the reserved set -----------------
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "-c model_reasoning_effort=high",  # short config flag
-        "--config model_reasoning_effort=high",  # long config flag
-        "--config=model_reasoning_effort=high",  # attached long config flag
-        '-c " model_reasoning_effort =high"',  # whitespace around the key
-        # Lookalike spellings, conservatively refused — same #287/#310 treatment: kimi's
-        # -c parser is literal and case-sensitive, so these are junk keys kimi never
-        # reads, but denying them costs nothing and keeps the denylist unprobeable.
-        "-c Model_Reasoning_Effort=high",
-        "-c '\"model_reasoning_effort\"=high'",  # escaped quotes survive shlex
-    ],
-)
-def test_extra_args_reserves_reasoning_effort_key(monkeypatch, raw):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raw)
-    ea = config.extra_args()
-    assert ea.valid is False
-    # The refusal must point the operator at the first-class replacements for THIS key.
-    assert "KIMI_IN_CLAUDE_REASONING_EFFORT" in ea.error
-    assert "reasoning_effort" in ea.error
-    # The -c VALUE is never echoed in an error envelope.
-    assert "=high" not in ea.error
-
-
-def test_extra_args_model_denial_names_model_controls_not_effort(monkeypatch):
-    # Each reserved key's refusal names its own first-class controls.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c model=gpt-5-kimi")
-    ea = config.extra_args()
-    assert ea.valid is False
-    assert "KIMI_IN_CLAUDE_MODEL" in ea.error
-    assert "KIMI_IN_CLAUDE_REASONING_EFFORT" not in ea.error
 
 
 # --- Reasoning-effort shape bounds (#309, Kimi re-review) -----------------------------
@@ -605,3 +369,81 @@ def test_reasoning_effort_shape_rejects_every_surrogate():
         assert config.reasoning_effort_shape_error(chr(cp)) == "contains a surrogate code point"
     for cp in (0xD7FF, 0xE000, 0x1F600):  # range neighbours + an astral character
         assert config.reasoning_effort_shape_error(chr(cp)) is None
+
+
+# --------------------------------------------------------------------------- #
+# KIMI_IN_CLAUDE_EXTRA_ARGS — no safe passthrough exists for kimi
+# --------------------------------------------------------------------------- #
+# The Codex original allowlisted `-c KEY=VALUE`, `-p NAME`, and `--enable/--disable`.
+# kimi has none of those, and reuses two of the short flags for other things, so the
+# allowlist is empty and any configured value is refused rather than silently ignored.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-p my-profile",  # -p is kimi's PROMPT flag
+        "-c key=value",  # -c is kimi's --continue
+        "--config model=x",
+        "--profile prod",
+        "--enable some_feature",
+        "--add-dir /etc",  # would defeat worktree isolation
+        "--agent-file /tmp/evil.md",  # would replace the read-only agent profile
+    ],
+)
+def test_extra_args_refuses_every_option(monkeypatch, value):
+    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", value)
+    parsed = config.extra_args()
+    assert parsed.configured is True
+    assert parsed.valid is False
+    assert parsed.tokens == (), "a refused passthrough must inject nothing"
+
+
+def test_extra_args_refusal_explains_the_flag_collision(monkeypatch):
+    """-p and -c mean PROMPT and CONTINUE in kimi. Silently accepting `-p foo` would append
+    a second prompt after the plugin's own and override the run's real instructions."""
+    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-p sneaky")
+    parsed = config.extra_args()
+    assert parsed.valid is False
+    assert "PROMPT" in parsed.error
+
+
+def test_extra_args_unset_is_valid_and_empty(monkeypatch):
+    monkeypatch.delenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raising=False)
+    parsed = config.extra_args()
+    assert parsed.configured is False
+    assert parsed.valid is True
+    assert parsed.tokens == ()
+
+
+def test_extra_args_blank_is_treated_as_unset(monkeypatch):
+    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "   ")
+    assert config.extra_args().configured is False
+
+
+def test_isolation_levels_are_inherit_and_ignore_skills():
+    assert set(config.VALID_ISOLATIONS) == {"inherit", "ignore-skills"}
+
+
+@pytest.mark.parametrize("isolation", ["inherit", "ignore-skills"])
+def test_isolation_flags_are_empty_for_kimi(isolation):
+    """kimi has no --ignore-user-config equivalent; isolation is realized via --skills-dir,
+    whose value comes from skills_dir_for rather than a standalone flag token."""
+    assert config.isolation_flags(isolation) == []
+
+
+def test_isolation_flags_rejects_an_unknown_level():
+    with pytest.raises(ValueError):
+        config.isolation_flags("ignore-config")  # a Codex level that no longer exists
+
+
+def test_skills_dir_is_none_when_inheriting():
+    assert config.skills_dir_for("inherit") is None
+
+
+def test_skills_dir_for_ignore_skills_is_an_existing_empty_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path))
+    path = config.skills_dir_for("ignore-skills")
+    assert path is not None
+    assert Path(path).is_dir()
+    assert not any(Path(path).iterdir())

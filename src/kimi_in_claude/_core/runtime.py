@@ -213,10 +213,17 @@ def sweep_orphans(marker: str, grace_seconds: float = _ORPHAN_SWEEP_GRACE_SECOND
         if not find_orphans(marker):
             break
         time.sleep(0.05)
-    # SIGKILL the groups unconditionally: the marked leader can exit within the grace
-    # period while its unmarked children keep running, so an empty marker search is not
-    # evidence the group is gone (the exact gap this function exists to close).
-    _signal_groups(groups, signal.SIGKILL)
+    # Re-derive the groups before escalating rather than reusing the pre-SIGTERM list. A
+    # pgid is just a number: if every process in a group exited during the grace period,
+    # the kernel is free to reuse that number for an unrelated group, and an unconditional
+    # SIGKILL would then hit a stranger. Re-deriving means we only ever escalate against
+    # groups that STILL match the marker.
+    #
+    # This does leave the case the marked leader exits while an unmarked child survives —
+    # the child is no longer discoverable by marker. That is a known limit of argv-based
+    # matching, documented here rather than papered over; closing it needs an OS-level
+    # containment handle (cgroup / job object), not a better search.
+    _signal_groups(_orphan_process_groups(marker), signal.SIGKILL)
     return pids
 
 
@@ -442,6 +449,18 @@ async def run_async(
                         "reclaimed %d orphaned process(es) after cancellation", len(reclaimed)
                     )
         raise
+    # Sweep on the SUCCESS path too. A run that exits 0 can still have backgrounded work —
+    # `nohup`, `setsid`, a daemonizing build step — and nothing else would ever reap it.
+    # Sweeping only on timeout/cancel left those running indefinitely, holding the very
+    # worktree the caller is about to delete.
+    if orphan_marker:
+        with contextlib.suppress(ValueError):
+            reclaimed = sweep_orphans(orphan_marker)
+            if reclaimed:
+                logger.warning(
+                    "reclaimed %d process(es) still running after the command exited",
+                    len(reclaimed),
+                )
     elapsed = int((time.monotonic() - start) * 1000)
     if timed_out:
         return CommandRun(out, TIMED_OUT, -9, elapsed, True, output_truncated=truncated)

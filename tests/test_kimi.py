@@ -1,863 +1,457 @@
-"""Kimi command building, probes, and failure classification."""
+"""The `kimi` CLI adapter: command construction, the file handshake, and classification.
+
+Replaces the Codex-era adapter suite wholesale — the two CLIs share no invocation surface
+(no sandbox flag, no stdin prompt, no --output-last-message), so porting those assertions
+would have tested a contract that does not exist.
+
+Every expectation here traces to behavior verified against kimi-code 0.35.0; the captures
+live in docs/kimi-help/0.35.0/.
+"""
 
 from __future__ import annotations
 
+import json
 import os
-import tomllib
+from pathlib import Path
 
-import anyio
 import pytest
 
 from kimi_in_claude import cli_contract, kimi
-from kimi_in_claude._core import worktree
 from kimi_in_claude._core.runtime import CommandRun
 from kimi_in_claude.preflight import FlagSupport
+from kimi_in_claude.schemas import Meta
 
-_ALL_FLAGS = FlagSupport(
-    supported=frozenset(cli_contract.ALWAYS_SEND_FLAGS | set(cli_contract.HELP_GATED_FLAGS)),
+ALL_FLAGS = FlagSupport(
+    supported=frozenset({cli_contract.MODEL_FLAG, cli_contract.SKILLS_DIR_FLAG}),
     help_parsed=True,
 )
-_NO_MODEL = FlagSupport(supported=frozenset(cli_contract.ALWAYS_SEND_FLAGS), help_parsed=True)
+NO_FLAGS = FlagSupport(supported=frozenset(), help_parsed=True)
 
 
-def test_build_exec_command_core(tmp_path):
-    out = str(tmp_path / "last.txt")
-    cmd, dropped = kimi.build_exec_command(
-        cwd="/repo",
+def _build(**kwargs):
+    params = {
+        "cwd": "/repo",
+        "sandbox": cli_contract.SANDBOX_WORKSPACE_WRITE,
+        "isolation": "inherit",
+        "prompt_pointer": "read the prompt file",
+        "flag_support": ALL_FLAGS,
+    }
+    params.update(kwargs)
+    return kimi.build_exec_command(**params)
+
+
+# --------------------------------------------------------------------------- #
+# The read-only guarantee
+# --------------------------------------------------------------------------- #
+def test_read_only_without_an_agent_file_raises_rather_than_degrading():
+    """The tools allowlist is the ONLY thing enforcing read-only — a worktree does not
+    contain kimi. Emitting a read-only command without it would silently hand a consult an
+    unrestricted agent, so this must fail loudly."""
+    with pytest.raises(ValueError, match="agent file"):
+        _build(sandbox=cli_contract.SANDBOX_READ_ONLY, agent_file_path=None)
+
+
+def test_read_only_sends_the_agent_file():
+    cmd, _ = _build(
+        sandbox=cli_contract.SANDBOX_READ_ONLY, agent_file_path="/tmp/wt/.kimi-in-claude/a.md"
+    )
+    assert cmd[cmd.index(cli_contract.AGENT_FILE_FLAG) + 1] == "/tmp/wt/.kimi-in-claude/a.md"
+
+
+def test_the_agent_file_flag_is_never_help_gated_away():
+    """A guarantee-bearing flag must survive even when `kimi --help` advertises nothing;
+    if it could be dropped, read-only would silently downgrade to unrestricted."""
+    cmd, dropped = _build(
+        sandbox=cli_contract.SANDBOX_READ_ONLY,
+        agent_file_path="/tmp/a.md",
+        flag_support=NO_FLAGS,
+    )
+    assert cli_contract.AGENT_FILE_FLAG in cmd
+    assert cli_contract.AGENT_FILE_FLAG not in dropped
+    assert cli_contract.AGENT_FILE_FLAG not in cli_contract.HELP_GATED_FLAGS
+
+
+def test_the_read_only_agent_grants_no_write_or_shell_tool():
+    doc = kimi.read_only_agent_document()
+    tools_block = doc.split("tools:")[1].split("---")[0]
+    for forbidden in ("Bash", "Write", "Edit", "MultiEdit", "Shell"):
+        assert forbidden not in tools_block
+    assert set(cli_contract.READ_ONLY_AGENT_TOOLS) == {
+        line.strip("- ").strip() for line in tools_block.strip().splitlines()
+    }
+
+
+def test_the_read_only_agent_document_is_valid_frontmatter():
+    doc = kimi.read_only_agent_document()
+    assert doc.startswith("---\n")
+    assert doc.count("---") >= 2
+    assert f"name: {cli_contract.READ_ONLY_AGENT_NAME}" in doc
+
+
+# --------------------------------------------------------------------------- #
+# Command construction
+# --------------------------------------------------------------------------- #
+def test_the_output_format_is_always_stream_json():
+    cmd, _ = _build()
+    assert cmd[cmd.index(cli_contract.OUTPUT_FORMAT_FLAG) + 1] == cli_contract.OUTPUT_FORMAT_JSON
+
+
+def test_the_prompt_rides_argv_not_stdin():
+    # kimi ignores stdin entirely (`echo x | kimi -p` errors on a missing argument).
+    cmd, _ = _build(prompt_pointer="POINTER")
+    assert cmd[cmd.index(cli_contract.PROMPT_FLAG) + 1] == "POINTER"
+    assert "-" not in cmd[-1:]
+
+
+def test_an_oversized_argv_prompt_is_refused():
+    """argv is capped near 950k chars and kimi CRASHES past it with a Node RangeError
+    rather than erroring cleanly, so the caller must never inline gathered context."""
+    with pytest.raises(ValueError, match="handshake prompt file"):
+        _build(prompt_pointer="x" * (cli_contract.MAX_ARGV_PROMPT_CHARS + 1))
+
+
+def test_add_dir_is_never_sent():
+    # --add-dir would grant kimi a workspace root outside the throwaway worktree.
+    cmd, _ = _build()
+    assert cli_contract.ADD_DIR_FLAG not in cmd
+
+
+def test_prompt_mode_incompatible_flags_are_never_sent():
+    cmd, _ = _build()
+    for flag in cli_contract.PROMPT_MODE_INCOMPATIBLE_FLAGS:
+        assert flag not in cmd
+
+
+def test_model_is_help_gated_and_reported_when_dropped():
+    cmd, dropped = _build(model="acme/model-one", flag_support=NO_FLAGS)
+    assert cli_contract.MODEL_FLAG not in cmd
+    assert dropped == [cli_contract.MODEL_FLAG]
+
+
+def test_a_gated_flag_drops_its_value_too():
+    """Dropping the flag but leaving its value would make the value a positional argument."""
+    cmd, _ = _build(model="acme/model-one", flag_support=NO_FLAGS)
+    assert "acme/model-one" not in cmd
+
+
+def test_reconcile_dropped_model_clears_reported_provenance():
+    meta = Meta(
+        cwd="/x",
+        tier="consult",
         sandbox="read-only",
         isolation="inherit",
-        output_last_message_path=out,
-        model="gpt-5.4",
-        flag_support=_ALL_FLAGS,
+        timeout_seconds=60,
+        elapsed_ms=0,
     )
-    assert cmd[0] == "kimi"
-    assert "exec" in cmd
-    assert "--json" in cmd
-    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
-    assert cmd[cmd.index("--cd") + 1] == "/repo"
-    assert cmd[cmd.index("--output-last-message") + 1] == out
-    assert "--ephemeral" in cmd
-    assert cmd[cmd.index("--model") + 1] == "gpt-5.4"
-    assert cmd[-1] == cli_contract.STDIN_PROMPT  # prompt via stdin sentinel
-    assert dropped == []
-
-
-def test_build_exec_command_isolation(tmp_path):
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="workspace-write",
-        isolation="ignore-rules",
-        output_last_message_path=str(tmp_path / "l"),
-        flag_support=_ALL_FLAGS,
+    meta.model = "acme/model-one"
+    result = kimi.KimiRunResult(
+        run=CommandRun("", "", 0, 1, False),
+        last_message=None,
+        dropped_flags=[cli_contract.MODEL_FLAG],
     )
-    assert "--ignore-user-config" in cmd
-    assert "--ignore-rules" in cmd
+    kimi.reconcile_dropped_model(result, meta)
+    assert meta.model is None, "meta claimed a model the run never used"
 
 
-@pytest.mark.parametrize(
-    ("sandbox", "isolation"),
-    [
-        ("read-only", "inherit"),  # consult / review tier
-        ("workspace-write", "inherit"),  # delegate tier
-        ("workspace-write", "ignore-rules"),  # most-isolated
-    ],
+def test_extra_args_are_appended_after_gating():
+    cmd, _ = _build(extra_args=("--some-operator-flag",), flag_support=NO_FLAGS)
+    assert cmd[-1] == "--some-operator-flag"
+
+
+# --------------------------------------------------------------------------- #
+# Reasoning effort rides the environment, not argv
+# --------------------------------------------------------------------------- #
+def test_reasoning_effort_is_set_in_the_environment():
+    env = kimi.build_run_env("high")
+    assert env[cli_contract.REASONING_EFFORT_ENV] == "high"
+
+
+def test_no_effort_leaves_the_variable_unset():
+    env = kimi.build_run_env(None)
+    assert cli_contract.REASONING_EFFORT_ENV not in env
+
+
+def test_the_output_format_env_is_pinned():
+    """A user's KIMI_MODEL_OUTPUT_FORMAT=text would otherwise strip the event stream out
+    from under the parser, leaving no answer channel at all for a read-only run."""
+    env = kimi.build_run_env(None)
+    assert env[cli_contract.MODEL_OUTPUT_FORMAT_ENV] == cli_contract.OUTPUT_FORMAT_JSON
+
+
+# --------------------------------------------------------------------------- #
+# The prompt/answer handshake
+# --------------------------------------------------------------------------- #
+def test_handshake_writes_the_prompt_and_agent_for_a_read_only_run(tmp_path):
+    paths = kimi.write_handshake(str(tmp_path / "h"), "THE PROMPT", read_only=True)
+    assert Path(paths["prompt"]).read_text() == "THE PROMPT"
+    assert "Read" in Path(paths["agent"]).read_text()
+    # A read-only agent has no Write tool, so offering it an answer file would be a lie.
+    assert "answer" not in paths
+
+
+def test_handshake_offers_an_answer_file_only_to_the_propose_tier(tmp_path):
+    paths = kimi.write_handshake(str(tmp_path / "h"), "P", read_only=False)
+    assert paths["answer"].endswith(cli_contract.ANSWER_FILE_NAME)
+    assert "agent" not in paths
+
+
+def test_the_handshake_dir_is_outside_any_repository(tmp_path):
+    """It must not live in the worktree. The worktree is seeded from repository content, so
+    a repo tracking `.kimi-in-claude` as a symlink would redirect these writes outside the
+    tree — and an agent file redirected to /dev/null could void the read-only guarantee."""
+    d = kimi.create_handshake_dir()
+    assert not Path(d).is_relative_to(tmp_path)
+    assert Path(d).is_dir()
+
+
+def test_handshake_refuses_to_follow_a_planted_symlink(tmp_path):
+    """Regression for the escape Codex found: write_text followed a symlink at the target,
+    so a tracked `.kimi-in-claude` symlink made the SERVER write outside the worktree."""
+    victim = tmp_path / "victim.txt"
+    victim.write_text("ORIGINAL")
+    d = tmp_path / "handshake"
+    d.mkdir()
+    (d / cli_contract.PROMPT_FILE_NAME).symlink_to(victim)
+    with pytest.raises(OSError):
+        kimi.write_handshake(str(d), "ATTACKER CONTROLLED", read_only=True)
+    assert victim.read_text() == "ORIGINAL", "the server wrote through a symlink"
+
+
+def test_handshake_files_are_private(tmp_path):
+    paths = kimi.write_handshake(str(tmp_path / "h"), "P", read_only=True)
+    assert Path(paths["prompt"]).stat().st_mode & 0o077 == 0
+
+
+def test_the_pointer_prompt_stays_small_enough_for_argv(tmp_path):
+    paths = kimi.write_handshake(str(tmp_path / "h"), "P", read_only=False)
+    for read_only in (True, False):
+        assert len(kimi.build_prompt_pointer(paths, read_only=read_only)) < 2000
+
+
+def test_the_read_only_pointer_does_not_ask_for_an_answer_file(tmp_path):
+    paths = kimi.write_handshake(str(tmp_path / "h"), "P", read_only=True)
+    pointer = kimi.build_prompt_pointer(paths, read_only=True)
+    assert cli_contract.ANSWER_FILE_NAME not in pointer
+
+
+# --------------------------------------------------------------------------- #
+# The answer file is model-controlled at read time
+# --------------------------------------------------------------------------- #
+def test_a_symlinked_answer_file_is_not_followed(tmp_path):
+    """A full-tool delegate can replace answer.md with a symlink to a host file, which
+    would launder arbitrary content into the result envelope."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET")
+    answer = tmp_path / "answer.md"
+    answer.symlink_to(secret)
+    assert kimi._read_answer_file(str(answer)) == ""
+
+
+def test_an_oversized_answer_file_is_refused(tmp_path):
+    answer = tmp_path / "answer.md"
+    answer.write_text("x" * (kimi.MAX_ANSWER_BYTES + 10))
+    assert kimi._read_answer_file(str(answer)) == ""
+
+
+def test_a_fifo_answer_file_does_not_block(tmp_path):
+    """A FIFO would hang the read — and with it the server — indefinitely."""
+    fifo = tmp_path / "answer.md"
+    os.mkfifo(fifo)
+    assert kimi._read_answer_file(str(fifo)) == ""
+
+
+def test_a_normal_answer_file_still_reads(tmp_path):
+    # Negative control: the hardening above must not break the ordinary path.
+    answer = tmp_path / "answer.md"
+    answer.write_text("  the answer  ")
+    assert kimi._read_answer_file(str(answer)) == "the answer"
+
+
+# --------------------------------------------------------------------------- #
+# Answer resolution
+# --------------------------------------------------------------------------- #
+STREAM = (
+    '{"role":"meta","type":"system.version","version":"0.35.0"}\n'
+    '{"role":"assistant","tool_calls":[{"type":"function","id":"Read:0",'
+    '"function":{"name":"Read","arguments":"{}"}}]}\n'
+    '{"role":"tool","tool_call_id":"Read:0","content":"file contents"}\n'
+    '{"role":"assistant","content":"the streamed answer"}\n'
+    '{"role":"meta","type":"session.resume_hint","session_id":"session_x"}\n'
 )
-def test_build_exec_command_disables_remote_plugin_every_tier(tmp_path, sandbox, isolation):
-    # #287: connectors are disabled on EVERY model-bearing call, regardless of tier/isolation.
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox=sandbox,
-        isolation=isolation,
-        output_last_message_path=str(tmp_path / "l"),
-        flag_support=_ALL_FLAGS,
-    )
-    assert cmd[cmd.index("--disable") + 1] == cli_contract.REMOTE_PLUGIN_FEATURE
-    # It is a plugin-owned flag (before operator extra_args), never gated away.
-    assert cli_contract.DISABLE_FEATURE_FLAG in cli_contract.ALWAYS_SEND_FLAGS
 
 
-def test_build_exec_command_disable_precedes_extra_args(tmp_path):
-    # The plugin-owned --disable is emitted before any operator extra_args, so an operator
-    # token can never displace it (and --disable wins over --enable regardless of order).
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        extra_args=("-c", "model_provider=x"),
-        flag_support=_ALL_FLAGS,
-    )
-    assert cmd.index("--disable") < cmd.index("-c")
+def test_the_answer_file_wins_when_present(tmp_path):
+    answer = tmp_path / "answer.md"
+    answer.write_text("the file answer")
+    assert kimi._resolve_answer(str(answer), STREAM) == "the file answer"
 
 
-def test_build_exec_command_drops_unsupported_model(tmp_path):
-    cmd, dropped = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        model="gpt-5.4",
-        flag_support=_NO_MODEL,
-    )
-    assert "--model" not in cmd
-    assert "gpt-5.4" not in cmd
-    assert dropped == ["--model"]
+def test_the_stream_is_the_fallback_when_no_answer_file(tmp_path):
+    assert kimi._resolve_answer(None, STREAM) == "the streamed answer"
 
 
-def test_build_exec_command_passes_arbitrary_model_through(tmp_path):
-    # An unlisted/unknown slug is NOT validated here — kimi exec is the validator.
-    cmd, dropped = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        model="totally-made-up-model-9000",
-        flag_support=_ALL_FLAGS,
-    )
-    assert cmd[cmd.index("--model") + 1] == "totally-made-up-model-9000"
-    assert dropped == []
+def test_an_empty_answer_file_falls_back_to_the_stream(tmp_path):
+    answer = tmp_path / "answer.md"
+    answer.write_text("   \n")
+    assert kimi._resolve_answer(str(answer), STREAM) == "the streamed answer"
 
 
-def test_build_exec_command_schema_and_add_dir(tmp_path):
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="workspace-write",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        output_schema_path=str(tmp_path / "s.json"),
-        add_dirs=("/extra",),
-        skip_git_repo_check=True,
-        flag_support=_ALL_FLAGS,
-    )
-    assert "--output-schema" in cmd
-    assert cmd[cmd.index("--add-dir") + 1] == "/extra"
-    assert "--skip-git-repo-check" in cmd
+def test_a_missing_answer_file_falls_back_to_the_stream(tmp_path):
+    assert kimi._resolve_answer(str(tmp_path / "nope.md"), STREAM) == "the streamed answer"
 
 
-def test_classify_not_found():
-    err = kimi.classify_failure(CommandRun("", kimi.runtime.BINARY_NOT_FOUND, 127, 1, False))
+def test_no_answer_anywhere_returns_none():
+    """None makes the caller fail loudly; a placeholder string would launder an empty run
+    into a usable-looking result."""
+    only_tools = '{"role":"assistant","tool_calls":[{"type":"function","id":"a"}]}\n'
+    assert kimi._resolve_answer(None, only_tools) is None
+
+
+def test_tool_call_ids_are_not_used_as_correlation_keys():
+    """Verified on 0.35.0: `tool_call_id` repeats within one run ("Read:0" appeared twice),
+    so nothing may key on it."""
+    duplicated = STREAM + '{"role":"tool","tool_call_id":"Read:0","content":"again"}\n'
+    assert kimi._resolve_answer(None, duplicated) == "the streamed answer"
+
+
+# --------------------------------------------------------------------------- #
+# Failure classification
+# --------------------------------------------------------------------------- #
+def _run(stdout="", stderr="", exit_code=1, timed_out=False):
+    return CommandRun(stdout, stderr, exit_code, 10, timed_out)
+
+
+def test_missing_binary():
+    from kimi_in_claude._core.runtime import BINARY_NOT_FOUND
+
+    err = kimi.classify_failure(_run(stderr=BINARY_NOT_FOUND, exit_code=127))
     assert err.code == "kimi_not_found"
 
 
-def test_classify_timeout():
-    err = kimi.classify_failure(CommandRun("", kimi.runtime.TIMED_OUT, -9, 1, True))
+def test_timeout():
+    err = kimi.classify_failure(_run(timed_out=True))
     assert err.code == "timeout"
-    assert err.temporary
 
 
-def test_classify_auth():
-    err = kimi.classify_failure(CommandRun("", "Not logged in. Run `kimi login`", 1, 1, False))
-    assert err.code == "kimi_auth_required"
-    assert err.repair.next_step == "authenticate"
+def test_an_unknown_model_alias_is_the_callers_argument_not_drift():
+    # Captured verbatim from kimi-code 0.35.0.
+    blob = 'error: failed to run prompt: Model "nope" is not configured in config.toml.'
+    err = kimi.classify_failure(_run(stderr=blob))
+    assert err.code == "invalid_model"
 
 
-def test_classify_contract_drift():
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--zzz' found", 2, 1, False)
-    )
+def test_an_unknown_option_is_contract_drift():
+    err = kimi.classify_failure(_run(stderr="error: unknown option '--output-format'"))
     assert err.code == "cli_contract_changed"
 
 
-def test_classify_unknown_feature_flag_is_contract_drift():
-    # #287: an upstream rename/removal of remote_plugin makes `--disable remote_plugin` print
-    # "Unknown feature flag" — must fail-closed as cli_contract_changed, not generic nonzero_exit.
-    err = kimi.classify_failure(
-        CommandRun("", "Error: Unknown feature flag: remote_plugin", 1, 1, False)
-    )
+def test_prompt_mode_incompatibility_is_drift():
+    err = kimi.classify_failure(_run(stderr="error: Cannot combine --prompt with --yolo."))
     assert err.code == "cli_contract_changed"
 
 
-def test_classify_nonzero_generic():
-    err = kimi.classify_failure(CommandRun("", "boom", 1, 1, False))
-    assert err.code == "nonzero_exit"
-    assert "boom" in err.message
-
-
-def test_classify_failure_redacts_secret_in_detail():
-    # A secret echoed by kimi/git before a non-zero exit must not reach error.message.
-    secret = "sk-" + "a" * 32
-    err = kimi.classify_failure(CommandRun("", f"auth failed token={secret}", 1, 1, False))
-    assert err.code == "nonzero_exit"
-    assert secret not in err.message
-    assert "[redacted: secret value]" in err.message
-
-
-def test_classify_failure_redacts_secret_straddling_truncation_boundary():
-    # A secret that crosses the 300-char detail cut must still be fully redacted:
-    # redaction runs on the whole text before truncation, so no prefix can leak.
-    secret = "sk-" + "a" * 40
-    stderr = "x" * 290 + secret  # begins before the 300-char cut, extends past it
-    err = kimi.classify_failure(CommandRun("", stderr, 1, 1, False))
-    assert err.code == "nonzero_exit"
-    assert "sk-aaaaaaa" not in err.message
-
-
-# --- classify_failure(sanitize=...): worktree-path-safe delegate errors (#420) ------
-#
-# `sanitize`, when given, REPLACES the `nonzero_exit` branch's `redact_text` call (the
-# sanitizer already includes redaction). Omitted, behavior must be byte-identical to
-# before this parameter existed.
-
-
-def test_classify_failure_sanitize_none_is_byte_identical():
-    """Pin: `sanitize=None` (the default, and omitting the kwarg entirely) must match
-    today's redact_text-only behavior exactly."""
-    secret = "sk-" + "a" * 32
-    run = CommandRun("", f"auth failed token={secret}", 1, 1, False)
-    omitted = kimi.classify_failure(run)
-    explicit_none = kimi.classify_failure(run, sanitize=None)
-    assert omitted.message == explicit_none.message
-    assert "[redacted: secret value]" in explicit_none.message
-
-
-def test_classify_failure_sanitize_none_leaks_worktree_path_positive_control(tmp_path):
-    """Positive control: without a `sanitize` callable, a worktree path in the raw
-    diagnostic DOES leak into the message — proves the assertions below are not vacuous."""
-    wt = str(tmp_path / "cic-worktree-p" / "tree")
-    run = CommandRun("", f"error at {wt}/f.py", 1, 1, False)
-    err = kimi.classify_failure(run)
-    assert wt in err.message
-
-
-def test_classify_failure_sanitize_relativizes_and_redacts(tmp_path):
-    """The classify_failure path test (#420): a delegate-error stderr embedding the
-    worktree path AND its file:// alias comes back relativized, with no absolute path,
-    when a sanitize callable is supplied. RED before the `sanitize` parameter exists."""
-    wt = str(tmp_path / "cic-worktree-x" / "tree")
-    aliases = worktree.path_aliases(wt)
-    stderr = f"error at {wt}/f.py (also file://{wt}/f.py)"
-    run = CommandRun("", stderr, 1, 1, False)
-    err = kimi.classify_failure(run, sanitize=lambda t: worktree.sanitize_prose(t, aliases) or "")
-    assert wt not in err.message
-    assert os.path.realpath(wt) not in err.message
-    assert "./f.py" in err.message
-
-
-def test_classify_failure_sanitize_survives_partial_alias_consumption(tmp_path):
-    """Ordering attack A: naive redact-then-relativize lets the redactor consume PART of
-    the file:// alias, leaving an un-relativizable dead-path remainder. sanitize_prose
-    stages the alias first, so it never fragments."""
-    wt = str(tmp_path / "cic-worktree-c" / "tree")
-    aliases = worktree.path_aliases(wt)
-    stderr = f"api_key={'A' * 16}=file://{wt}/abcdefgh"
-    run = CommandRun("", stderr, 1, 1, False)
-    err = kimi.classify_failure(run, sanitize=lambda t: worktree.sanitize_prose(t, aliases) or "")
-    assert "abcdefgh" not in err.message
-    assert wt not in err.message
-    assert "cic-worktree-" not in err.message
-
-
-def test_classify_failure_sanitize_redacts_short_path_bearing_secret(tmp_path):
-    """Ordering attack B: naive relativize-then-redact shortens
-    `api_key=<root>/abcdefgh` below the redactor's 16-char floor, letting the secret
-    escape. sanitize_prose defeats this by redacting the staged (still-long) value."""
-    wt = str(tmp_path / "cic-worktree-s" / "tree")
-    aliases = worktree.path_aliases(wt)
-    stderr = f"api_key={wt}/abcdefgh"
-    run = CommandRun("", stderr, 1, 1, False)
-    err = kimi.classify_failure(run, sanitize=lambda t: worktree.sanitize_prose(t, aliases) or "")
-    assert "abcdefgh" not in err.message
-    assert "[redacted: secret value]" in err.message
-
-
-def test_classify_failure_sanitize_replaces_sentence_final_root_with_marker(tmp_path):
-    """#420 review round 3: a raw diagnostic ending in a bare worktree root plus a period
-    (`fatal: failed in <wt>.`, a common git-stderr shape) must not leak the absolute path
-    through classify_failure's sanitize path — this was `sanitize_prose`'s own
-    ambiguous-period carve-out leaking, not something specific to classify_failure."""
-    wt = str(tmp_path / "cic-worktree-m" / "tree")
-    aliases = worktree.path_aliases(wt)
-    stderr = f"fatal: failed in {wt}."
-    run = CommandRun("", stderr, 1, 1, False)
-    err = kimi.classify_failure(run, sanitize=lambda t: worktree.sanitize_prose(t, aliases) or "")
-    assert wt not in err.message
-    assert "cic-worktree-" not in err.message
-
-
-def test_classify_uses_error_event_message():
-    events = '{"type":"turn.failed","error":{"message":"model overloaded"}}'
-    err = kimi.classify_failure(CommandRun(events, "", 1, 1, False), events=events)
-    assert err.code == "nonzero_exit"
-    assert "model overloaded" in err.message
-
-
-def test_classify_auth_from_error_event():
-    events = '{"type":"error","message":"401 Unauthorized"}'
-    err = kimi.classify_failure(CommandRun(events, "", 1, 1, False), events=events)
+def test_auth_failure():
+    err = kimi.classify_failure(_run(stderr="401 Unauthorized"))
     assert err.code == "kimi_auth_required"
 
 
-def test_auth_beats_drift_ordering():
-    # A message with both auth + a clap-ish phrase classifies as auth, not drift.
-    err = kimi.classify_failure(CommandRun("", "not authenticated; invalid value", 1, 1, False))
-    assert err.code == "kimi_auth_required"
-
-
-def test_classify_rate_limited_with_retry_after():
-    err = kimi.classify_failure(
-        CommandRun("", "Error: 429 Too Many Requests. Retry-After: 30", 1, 1, False)
-    )
+def test_rate_limit_with_retry_after():
+    err = kimi.classify_failure(_run(stderr="429 rate limit exceeded, retry-after: 30"))
     assert err.code == "kimi_rate_limited"
-    assert err.temporary
     assert err.retry_after_ms == 30_000
 
 
-def test_classify_rate_limited_preserves_zero_retry_after():
-    # An explicit "Retry-After: 0" (retry now) must be preserved, not coalesced to
-    # the default backoff by a falsey check.
-    err = kimi.classify_failure(CommandRun("", "rate limit hit; Retry-After: 0", 1, 1, False))
-    assert err.code == "kimi_rate_limited"
-    assert err.retry_after_ms == 0
-
-
-def test_classify_rate_limited_default_backoff():
-    err = kimi.classify_failure(CommandRun("", "you have hit your usage limit", 1, 1, False))
-    assert err.code == "kimi_rate_limited"
-    assert err.temporary
+def test_rate_limit_without_a_delay_uses_the_default():
+    err = kimi.classify_failure(_run(stderr="429 too many requests"))
     assert err.retry_after_ms == cli_contract.RATE_LIMIT_DEFAULT_BACKOFF_MS
 
 
-def test_classify_rate_limited_from_error_event():
-    events = '{"type":"error","message":"rate limit exceeded"}'
-    err = kimi.classify_failure(CommandRun(events, "", 1, 1, False), events=events)
-    assert err.code == "kimi_rate_limited"
+def test_a_zero_retry_after_is_preserved():
+    """'retry now' is a real answer; coalescing 0 to the default with a falsey check would
+    silently delay a retry by a minute."""
+    err = kimi.classify_failure(_run(stderr="429 rate limited, retry-after: 0"))
+    assert err.retry_after_ms == 0
 
 
-def test_auth_beats_rate_limit_ordering():
-    # An auth message that also mentions a limit classifies as auth, not rate-limit.
-    err = kimi.classify_failure(CommandRun("", "401 unauthorized: usage limit", 1, 1, False))
-    assert err.code == "kimi_auth_required"
+def test_drift_is_checked_before_rate_limiting():
+    """A genuine contract change must never be masked as a retryable transient."""
+    both = "error: unknown option '--output-format'\n429 rate limit"
+    assert kimi.classify_failure(_run(stderr=both)).code == "cli_contract_changed"
 
 
-def test_drift_beats_rate_limit_ordering():
-    # A genuine contract-drift error is never masked as a transient rate limit.
-    err = kimi.classify_failure(CommandRun("", "error: invalid value 'x'; rate limit", 2, 1, False))
-    assert err.code == "cli_contract_changed"
+def test_an_unrecognized_failure_is_a_bounded_nonzero_exit():
+    err = kimi.classify_failure(_run(stderr="something went sideways", exit_code=3))
+    assert err.code == "nonzero_exit"
+    assert "3" in err.message
 
 
-def test_kimi_version(monkeypatch):
-    monkeypatch.setattr(
-        kimi.runtime,
-        "run_sync_capture",
-        lambda cmd, timeout_seconds: CommandRun("kimi-cli 0.147.0\n", "", 0, 1, False),
+def test_a_secret_in_the_failure_text_is_redacted():
+    blob = f"boom api_key={'A' * 32} while running"
+    err = kimi.classify_failure(_run(stderr=blob))
+    assert "A" * 32 not in err.message
+
+
+def test_there_is_no_backend_effort_rejection_branch():
+    """kimi SILENTLY IGNORES an unrecognized reasoning effort (verified: exit 0, answers at
+    the model's default). A classifier branch would be dead code claiming a check that
+    never runs; the effort is validated locally before spend instead. If a future kimi
+    starts rejecting efforts, this test should be replaced, not deleted."""
+    blob = "[reasoning.effort] [invalid_enum_value] Invalid value: 'bogus'."
+    err = kimi.classify_failure(_run(stderr=blob), reasoning_effort="bogus")
+    assert err.code != "invalid_reasoning_effort"
+
+
+# --------------------------------------------------------------------------- #
+# Free probes
+# --------------------------------------------------------------------------- #
+def test_provider_count_parses_the_real_payload_shape():
+    payload = json.dumps(
+        {
+            "providers": {"acme": {"baseUrl": "https://x", "apiKey": "sk-secret"}},
+            "models": {"acme/model-one": {}},
+        }
     )
-    assert kimi.kimi_version() == "kimi-cli 0.147.0"
+    assert kimi._provider_count(payload) == 1
 
 
-def test_kimi_version_missing(monkeypatch):
+def test_provider_count_is_none_on_garbage():
+    assert kimi._provider_count("not json") is None
+
+
+def test_login_status_detail_never_echoes_provider_details(monkeypatch):
+    """`kimi provider list --json` carries apiKey in plaintext and baseUrl, which can name
+    private infrastructure. The status detail is derived from the COUNT alone."""
+    payload = json.dumps(
+        {
+            "providers": {"acme": {"baseUrl": "https://internal.example", "apiKey": "sk-secret"}},
+            "models": {"a/b": {}},
+        }
+    )
     monkeypatch.setattr(
-        kimi.runtime,
-        "run_sync_capture",
-        lambda cmd, timeout_seconds: CommandRun("", kimi.runtime.BINARY_NOT_FOUND, 127, 1, False),
+        "kimi_in_claude._core.runtime.run_sync_capture",
+        lambda *a, **k: CommandRun(payload, "", 0, 5, False),
+    )
+    configured, detail = kimi.login_status()
+    assert configured is True
+    assert "sk-secret" not in (detail or "")
+    assert "internal.example" not in (detail or "")
+
+
+def test_login_status_is_indeterminate_when_the_probe_cannot_run(monkeypatch):
+    from kimi_in_claude._core.runtime import BINARY_NOT_FOUND
+
+    monkeypatch.setattr(
+        "kimi_in_claude._core.runtime.run_sync_capture",
+        lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
+    )
+    assert kimi.login_status() == (None, None)
+
+
+def test_kimi_version_returns_none_when_absent(monkeypatch):
+    from kimi_in_claude._core.runtime import BINARY_NOT_FOUND
+
+    monkeypatch.setattr(
+        "kimi_in_claude._core.runtime.run_sync_capture",
+        lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
     )
     assert kimi.kimi_version() is None
-
-
-def test_login_status_chatgpt(monkeypatch):
-    monkeypatch.setattr(
-        kimi.runtime,
-        "run_sync_capture",
-        lambda cmd, timeout_seconds: CommandRun("Logged in using ChatGPT\n", "", 0, 1, False),
-    )
-    ok, detail = kimi.login_status()
-    assert ok is True
-    assert "ChatGPT" in detail
-
-
-def test_login_status_logged_out(monkeypatch):
-    monkeypatch.setattr(
-        kimi.runtime,
-        "run_sync_capture",
-        lambda cmd, timeout_seconds: CommandRun("", "not logged in", 1, 1, False),
-    )
-    ok, detail = kimi.login_status()
-    assert ok is False
-    assert "login" in detail
-
-
-def test_login_status_unknown_when_missing(monkeypatch):
-    monkeypatch.setattr(
-        kimi.runtime,
-        "run_sync_capture",
-        lambda cmd, timeout_seconds: CommandRun("", kimi.runtime.BINARY_NOT_FOUND, 127, 1, False),
-    )
-    ok, detail = kimi.login_status()
-    assert ok is None
-    assert detail is None
-
-
-async def test_run_kimi_exec_reads_last_message(monkeypatch, tmp_path):
-    async def fake_run_async(
-        cmd, *, cwd, timeout_seconds, stdin_text, on_stdout_line=None, max_output_bytes=None
-    ):
-        # Emulate kimi writing the final message to --output-last-message.
-        out_path = cmd[cmd.index("--output-last-message") + 1]
-        from pathlib import Path
-
-        Path(out_path).write_text(
-            '{"summary":"hi","verdict":"pass","confidence":"high","findings":[]}'
-        )
-        return CommandRun('{"type":"token_count","usage":{"input_tokens":3}}\n', "", 0, 7, False)
-
-    monkeypatch.setattr(kimi.runtime, "run_async", fake_run_async)
-    result = await kimi.run_kimi_exec(
-        "q",
-        cwd=str(tmp_path),
-        sandbox="read-only",
-        isolation="inherit",
-        timeout_seconds=30,
-        output_schema={"type": "object"},
-        flag_support=_ALL_FLAGS,
-    )
-    assert result.run.exit_code == 0
-    assert "summary" in (result.last_message or "")
-
-
-def test_run_kimi_exec_forwards_on_event(monkeypatch):
-    captured = {}
-
-    async def fake_run_async(
-        cmd, *, cwd, timeout_seconds, stdin_text=None, on_stdout_line=None, max_output_bytes=None
-    ):
-        captured["on_stdout_line"] = on_stdout_line
-        from kimi_in_claude._core.runtime import CommandRun
-
-        return CommandRun("", "", 0, 1, False)
-
-    monkeypatch.setattr(kimi.runtime, "run_async", fake_run_async)
-    sentinel = lambda _l: None  # noqa: E731
-    anyio.run(
-        lambda: kimi.run_kimi_exec(
-            "p",
-            cwd=".",
-            sandbox="read-only",
-            isolation="inherit",
-            timeout_seconds=10,
-            on_event=sentinel,
-        )
-    )
-    assert captured["on_stdout_line"] is sentinel
-
-
-# --- KIMI_IN_CLAUDE_EXTRA_ARGS injection + reclassification (#231) ----------------
-
-from kimi_in_claude import config  # noqa: E402
-
-
-def test_build_exec_command_appends_extra_args_before_sentinel(tmp_path):
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        model="gpt-5.4",
-        extra_args=("-c", "model_provider=litellm", "--profile", "work"),
-        flag_support=_ALL_FLAGS,
-    )
-    # Extra args land after --model, and immediately before the stdin sentinel.
-    assert cmd[-1] == cli_contract.STDIN_PROMPT
-    assert cmd[-5:-1] == ["-c", "model_provider=litellm", "--profile", "work"]
-    assert cmd.index("-c") > cmd.index("--model")
-
-
-def test_build_exec_command_extra_args_survive_model_gating(tmp_path):
-    # Even when --model is help-gated away, extra args are never gated/dropped.
-    cmd, dropped = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        model="gpt-5.4",
-        extra_args=("--profile", "work"),
-        flag_support=_NO_MODEL,
-    )
-    assert "--model" in dropped
-    assert cmd[-3:] == ["--profile", "work", cli_contract.STDIN_PROMPT]
-
-
-def _extra(descriptors, tokens=("-c", "x=y")):
-    return config.ExtraArgs(
-        tokens=tuple(tokens), descriptors=tuple(descriptors), option_count=1, configured=True
-    )
-
-
-def test_classify_drift_attributes_to_extra_args_when_named():
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--profile' found", 2, 1, False),
-        extra_args=_extra(["--profile", "work"]),
-    )
-    assert err.code == "extra_args_rejected"
-    assert "KIMI_IN_CLAUDE_EXTRA_ARGS" in (err.repair.alternative or "")
-
-
-def test_classify_drift_stays_contract_changed_for_plugin_flag():
-    # kimi rejected --sandbox (a plugin guarantee flag), NOT any extra-arg descriptor.
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--sandbox' found", 2, 1, False),
-        extra_args=_extra(["--profile", "work"]),
-    )
-    assert err.code == "cli_contract_changed"
-
-
-def test_classify_drift_contract_changed_when_no_extra_args():
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--zzz' found", 2, 1, False),
-        extra_args=config.ExtraArgs(),  # unconfigured
-    )
-    assert err.code == "cli_contract_changed"
-
-
-def test_extra_args_rejected_error_hides_secret_value():
-    err = kimi.classify_failure(
-        CommandRun("", "error: invalid value for '--profile'", 2, 1, False),
-        extra_args=config.ExtraArgs(
-            tokens=("-c", "api_key=sk-secret", "--profile", "work"),
-            descriptors=("api_key", "--profile", "work"),
-            option_count=2,
-            configured=True,
-        ),
-    )
-    assert err.code == "extra_args_rejected"
-    assert "sk-secret" not in err.message
-    assert "sk-secret" not in (err.repair.alternative or "")
-
-
-def test_classify_reads_extra_args_from_env_by_default(monkeypatch):
-    # No explicit extra_args -> classify_failure reads config.extra_args() from env.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--profile work")
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--profile' found", 2, 1, False)
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_short_descriptor_does_not_misattribute_plugin_drift():
-    # Regression (#231 review): a short profile/feature name must not substring-match
-    # inside an unrelated plugin-flag rejection ("a" appears inside "--sandbox").
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--sandbox' found", 2, 1, False),
-        extra_args=_extra(["-p", "a"], tokens=("-p", "a")),
-    )
-    assert err.code == "cli_contract_changed"
-
-
-def test_classify_quoted_descriptor_still_attributes_to_extra_args():
-    # A genuine extra-arg rejection where kimi quotes the profile name still matches.
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--profile' found", 2, 1, False),
-        extra_args=_extra(["--profile", "work"], tokens=("--profile", "work")),
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_attributes_config_flag_token_drift_to_extra_args():
-    # Copilot #237: a rejection of the `--config` FLAG token itself (not the key) is
-    # still the operator's passthrough, so descriptors include the flag.
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '--config' found", 2, 1, False),
-        extra_args=config.ExtraArgs(
-            tokens=("--config", "model_provider=x"),
-            descriptors=("--config", "model_provider"),
-            option_count=1,
-            configured=True,
-        ),
-    )
-    assert err.code == "extra_args_rejected"
-
-
-# --- Reasoning-effort control (#309) ----------------------------------------------
-_EFFORT_KEY = cli_contract.MODEL_REASONING_EFFORT_CONFIG_KEY
-# The real backend rejection captured from kimi-cli 0.144.3 (2026-07-13, probe with
-# `-c model_reasoning_effort=totally-bogus-effort` on a valid model).
-_EFFORT_REJECTION_EVENT = (
-    '{"type":"error","message":"{\\"type\\": \\"error\\", \\"error\\": {\\"type\\": '
-    '\\"invalid_request_error\\", \\"message\\": \\"[ReasoningEffortParam] '
-    "[reasoning.effort] [invalid_enum_value] Invalid value: 'totally-bogus-effort'. "
-    "Supported values are: 'none', 'minimal', 'low', 'medium', 'high', and "
-    '\'xhigh\'.\\"}, \\"status\\": 400}"}'
-)
-
-
-def test_build_exec_command_passes_reasoning_effort_as_config_override(tmp_path):
-    cmd, dropped = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        reasoning_effort="high",
-        flag_support=_ALL_FLAGS,
-    )
-    assert f'{_EFFORT_KEY}="high"' in cmd
-    assert cmd[cmd.index(f'{_EFFORT_KEY}="high"') - 1] == "-c"
-    assert dropped == []
-
-
-def test_build_exec_command_omits_reasoning_effort_when_none(tmp_path):
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        reasoning_effort=None,
-        flag_support=_ALL_FLAGS,
-    )
-    assert not any(_EFFORT_KEY in tok for tok in cmd)
-
-
-def test_build_exec_command_passes_empty_reasoning_effort_through(tmp_path):
-    # Whole-domain rule: an explicit "" is the caller's value, passed through for
-    # kimi/the backend to judge — never silently coalesced to a default or dropped.
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        reasoning_effort="",
-        flag_support=_ALL_FLAGS,
-    )
-    assert f'{_EFFORT_KEY}=""' in cmd
-
-
-@pytest.mark.parametrize(
-    ("value", "expected_token"),
-    [
-        ("true", f'{_EFFORT_KEY}="true"'),  # boolean-shaped
-        ("3", f'{_EFFORT_KEY}="3"'),  # integer-shaped
-        ("1.5", f'{_EFFORT_KEY}="1.5"'),  # float-shaped
-        ('"high"', f'{_EFFORT_KEY}="\\"high\\""'),  # quoted — must NOT be unwrapped
-        ("[low, high]", f'{_EFFORT_KEY}="[low, high]"'),  # array-shaped
-        ("{effort = 1}", f'{_EFFORT_KEY}="{{effort = 1}}"'),  # table-shaped
-        # Astral char: default \uXXXX escaping would emit a surrogate PAIR, which
-        # TOML rejects (escapes must be scalar values) — degrading to the raw-string
-        # fallback; the encoder must emit it literally (ensure_ascii=False).
-        ("high\U0001f600", f'{_EFFORT_KEY}="high\U0001f600"'),
-    ],
-)
-def test_build_exec_command_toml_string_encodes_reasoning_effort(tmp_path, value, expected_token):
-    # Maintainer-review regression (#313): kimi TOML-parses the `-c` right-hand side
-    # and falls back to a string only when that parse fails, so a raw interpolation
-    # retypes boolean/numeric/collection-shaped values (0.144.3 then rejects them
-    # locally as an invalid type → misreported nonzero_exit) and silently unwraps
-    # quoted ones. TOML-string-encoding every value (JSON string syntax is valid
-    # TOML) makes the advertised open string round-trip exactly.
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        reasoning_effort=value,
-        flag_support=_ALL_FLAGS,
-    )
-    assert expected_token in cmd
-    assert cmd[cmd.index(expected_token) - 1] == "-c"
-    # The round-trip proof: the right-hand side is valid TOML that decodes back to
-    # the caller's exact string (kimi's fallback-to-raw-string never engages).
-    encoded = expected_token.partition("=")[2]
-    assert tomllib.loads(f"v = {encoded}")["v"] == value
-
-
-def test_build_exec_command_reasoning_effort_survives_model_gating(tmp_path):
-    # --model is help-gated and may be dropped; the effort -c pair is a config
-    # override, never gated, and must survive intact (it then applies to whatever
-    # model kimi resolves).
-    cmd, dropped = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        model="gpt-5.4",
-        reasoning_effort="xhigh",
-        flag_support=_NO_MODEL,
-    )
-    assert dropped == ["--model"]
-    assert f'{_EFFORT_KEY}="xhigh"' in cmd
-
-
-def test_build_exec_command_reasoning_effort_precedes_extra_args_and_sentinel(tmp_path):
-    # Plugin-owned tokens come before operator extra_args and the stdin sentinel.
-    cmd, _ = kimi.build_exec_command(
-        cwd="/repo",
-        sandbox="read-only",
-        isolation="inherit",
-        output_last_message_path=str(tmp_path / "l"),
-        reasoning_effort="low",
-        extra_args=("-p", "work"),
-        flag_support=_ALL_FLAGS,
-    )
-    assert cmd.index(f'{_EFFORT_KEY}="low"') < cmd.index("-p")
-    assert cmd[-1] == cli_contract.STDIN_PROMPT
-
-
-def test_classify_backend_effort_rejection_when_effort_sent():
-    # The backend 400 for a bad effort VALUE contains "Invalid value", which matches
-    # the drift patterns — but when this run sent a first-class effort override, it is
-    # the caller's argument, not contract drift (#309).
-    err = kimi.classify_failure(
-        CommandRun(_EFFORT_REJECTION_EVENT, "", 1, 1, False),
-        events=_EFFORT_REJECTION_EVENT,
-        extra_args=config.ExtraArgs(),
-        reasoning_effort="totally-bogus-effort",
-    )
-    assert err.code == "invalid_reasoning_effort"
-    assert err.temporary is False
-    assert err.details is not None and err.details.field == "reasoning_effort"
-    assert err.repair is not None
-    assert err.repair.next_step == "correct_arguments"
-    assert err.repair.tool == "kimi_models"
-    # The rejected value is never echoed back (it is caller input).
-    assert "totally-bogus-effort" not in err.message
-
-
-def test_classify_effort_marker_without_sent_effort_stays_contract_changed():
-    # No first-class effort was sent, so an effort-flavored rejection cannot be the
-    # caller's argument; the fail-loud drift classification stands.
-    err = kimi.classify_failure(
-        CommandRun(_EFFORT_REJECTION_EVENT, "", 1, 1, False),
-        events=_EFFORT_REJECTION_EVENT,
-        extra_args=config.ExtraArgs(),
-        reasoning_effort=None,
-    )
-    assert err.code == "cli_contract_changed"
-
-
-def test_classify_key_only_rejection_stays_contract_changed():
-    # A future kimi rejecting the CONFIG KEY itself (drift) names the key, not the
-    # backend's reasoning.effort markers — it must stay cli_contract_changed even
-    # though an effort was sent.
-    err = kimi.classify_failure(
-        CommandRun("", f"error: invalid value 'high' for '{_EFFORT_KEY}'", 2, 1, False),
-        extra_args=config.ExtraArgs(),
-        reasoning_effort="high",
-    )
-    assert err.code == "cli_contract_changed"
-
-
-def test_classify_extra_args_attribution_wins_without_effort_markers():
-    # A drift kimi explicitly attributes to an operator passthrough entry keeps the
-    # extra_args_rejected classification when an effort override was also sent but the
-    # blob carries NO backend effort markers (marker-bearing rejections win instead —
-    # see test_classify_effort_markers_beat_incidental_descriptor_match).
-    blob = "error: unexpected argument '--profile' found"
-    err = kimi.classify_failure(
-        CommandRun("", blob, 2, 1, False),
-        extra_args=_extra(["--profile", "work"]),
-        reasoning_effort="high",
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_auth_beats_effort_rejection():
-    # Auth failure classification runs before drift/effort attribution.
-    err = kimi.classify_failure(
-        CommandRun("", f"not logged in\n{_EFFORT_REJECTION_EVENT}", 1, 1, False),
-        extra_args=config.ExtraArgs(),
-        reasoning_effort="high",
-    )
-    assert err.code == "kimi_auth_required"
-
-
-def test_classify_shared_dash_c_rejection_stays_contract_changed_when_effort_sent():
-    # Kimi-review regression (#309): the plugin itself sends a bare `-c` pair for a
-    # first-class effort, so a rejection naming ONLY the shared `-c` flag must stay
-    # fail-loud cli_contract_changed even when an operator passthrough also uses `-c`.
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '-c' found", 2, 1, False),
-        extra_args=config.ExtraArgs(
-            tokens=("-c", "model_provider=azure"),
-            descriptors=("-c", "model_provider"),
-            option_count=1,
-            configured=True,
-        ),
-        reasoning_effort="high",
-    )
-    assert err.code == "cli_contract_changed"
-
-
-def test_classify_dash_c_rejection_attributes_to_extra_args_without_effort():
-    # Without a first-class effort the plugin sent no `-c` of its own, so the
-    # operator's passthrough keeps the attribution (pre-#309 behavior).
-    err = kimi.classify_failure(
-        CommandRun("", "error: unexpected argument '-c' found", 2, 1, False),
-        extra_args=config.ExtraArgs(
-            tokens=("-c", "model_provider=azure"),
-            descriptors=("-c", "model_provider"),
-            option_count=1,
-            configured=True,
-        ),
-        reasoning_effort=None,
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_key_naming_rejection_still_attributes_to_extra_args_with_effort():
-    # A rejection that names an operator-owned KEY (not just the shared flag) is
-    # unambiguous and keeps the extra-args attribution even when an effort was sent.
-    err = kimi.classify_failure(
-        CommandRun("", "error: invalid value for '-c': 'model_provider'", 2, 1, False),
-        extra_args=config.ExtraArgs(
-            tokens=("-c", "model_provider=azure"),
-            descriptors=("-c", "model_provider"),
-            option_count=1,
-            configured=True,
-        ),
-        reasoning_effort="high",
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_marker_named_passthrough_attributes_to_extra_args():
-    # Maintainer-review regression (#313): `--enable reasoning.effort` in the
-    # operator passthrough makes kimi print "Unknown feature flag: reasoning.effort"
-    # — a marker as a free substring, without the backend's bracketed `[…] […]`
-    # signature. That failure is the operator's entry (extra_args_rejected), not a
-    # backend effort rejection, even though an effort override was also sent.
-    err = kimi.classify_failure(
-        CommandRun("", "Unknown feature flag: reasoning.effort", 2, 1, False),
-        extra_args=config.ExtraArgs(
-            tokens=("--enable", "reasoning.effort"),
-            descriptors=("--enable", "reasoning.effort"),
-            option_count=1,
-            configured=True,
-        ),
-        reasoning_effort="high",
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_composite_marker_descriptor_attributes_to_extra_args(monkeypatch):
-    # Maintainer-review regression (#313): a passthrough descriptor that ITSELF
-    # carries the full bracketed marker signature (a profile literally named
-    # "[reasoning.effort][ReasoningEffortParam]" — the allowlist constrains flags,
-    # not name characters) would otherwise impersonate the backend rejection: kimi
-    # quotes the name in its error, and that quoted text alone satisfies
-    # is_reasoning_effort_rejection. When the matched descriptors account for the
-    # signature, the failure is the operator's entry, even with an effort sent.
-    name = "[reasoning.effort][ReasoningEffortParam]"
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", f"--profile '{name}'")
-    ea = config.extra_args()
-    assert ea.valid, ea.error  # the composite name passes the passthrough allowlist
-    err = kimi.classify_failure(
-        CommandRun("", f"error: invalid value '{name}' for '--profile'", 2, 1, False),
-        extra_args=ea,
-        reasoning_effort="high",
-    )
-    assert err.code == "extra_args_rejected"
-
-
-def test_classify_effort_markers_beat_incidental_descriptor_match():
-    # Kimi re-review regression (#309): the backend's effort rejection QUOTES the
-    # supported effort names, so an operator profile that happens to be named "high"
-    # token-matches the blob; the marker-bearing effort classification must win over
-    # that incidental descriptor hit.
-    err = kimi.classify_failure(
-        CommandRun(_EFFORT_REJECTION_EVENT, "", 1, 1, False),
-        events=_EFFORT_REJECTION_EVENT,
-        extra_args=config.ExtraArgs(
-            tokens=("-p", "high"),
-            descriptors=("-p", "high"),
-            option_count=1,
-            configured=True,
-        ),
-        reasoning_effort="totally-bogus-effort",
-    )
-    assert err.code == "invalid_reasoning_effort"
