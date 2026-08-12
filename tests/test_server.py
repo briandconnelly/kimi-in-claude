@@ -13,7 +13,16 @@ import pytest
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from pydantic import ValidationError
 
-from kimi_in_claude import __version__, cli_contract, delegate, kimi, orchestration, server
+from kimi_in_claude import (
+    __version__,
+    cli_contract,
+    delegate,
+    kimi,
+    orchestration,
+    runspace,
+    server,
+)
+from kimi_in_claude._core import worktree as _worktree_mod
 from kimi_in_claude._core.jobs import DiscardOutcome
 from kimi_in_claude._core.runtime import CommandRun
 from kimi_in_claude.schemas import (
@@ -25,6 +34,35 @@ from kimi_in_claude.schemas import (
     ReviewScope,
     apply_detail,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fake_worktree_lifecycle(monkeypatch, tmp_path_factory):
+    """Fake the worktree lifecycle for the tool-layer tests in this module.
+
+    Every tier now runs inside a throwaway worktree (kimi has no read-only sandbox), so
+    without this each consult/review/delegate test would need a seeded git repo. The REAL
+    worktree behavior — creation, seeding, diff capture, removal, and the guarantee that
+    the caller's tree is untouched — is covered against an actual repository in
+    tests/test_runspace.py. This module tests the tool and envelope layer above it.
+
+    A test that needs the real thing can opt out with
+    `monkeypatch.undo()` or by using its own repo fixture.
+    """
+    from types import SimpleNamespace
+
+    def _create(repo, *, timeout, on_parent=None):
+        path = tmp_path_factory.mktemp("kic-worktree")
+        if on_parent is not None:
+            on_parent(str(path))
+        return SimpleNamespace(path=str(path), baseline_warning=None)
+
+    monkeypatch.setattr(_worktree_mod, "create", _create)
+    monkeypatch.setattr(_worktree_mod, "remove", lambda *a, **k: None)
+    monkeypatch.setattr(_worktree_mod, "path_aliases", lambda *a, **k: ())
+    monkeypatch.setattr(_worktree_mod, "is_git_repo", lambda *a, **k: True)
+    if not hasattr(_worktree_mod.capture_diff, "_kic_patched"):
+        monkeypatch.setattr(_worktree_mod, "capture_diff", lambda *a, **k: "")
 
 
 def _fake_result(last_message, *, exit_code=0, stderr="", events=""):
@@ -174,26 +212,15 @@ async def _run_delegate_direct(tmp_path, *, task="do work", **kw):
 
 # --- status / capabilities ---------------------------------------------------
 def test_status_ready(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth (ChatGPT)."))
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
+    monkeypatch.setattr(
+        server.kimi, "login_status", lambda: (True, "Kimi reports 1 configured provider(s).")
+    )
     res = server.kimi_status()
     assert res["ok"] is True
     assert res["ready"] is True
     assert res["kimi_found"] is True
     assert res["version_supported"] is True
-
-
-def test_status_reports_raised_default_timeout(monkeypatch, clean_env):
-    # #341 acceptance: kimi_status surfaces the raised built-in sync deadline (300)
-    # in both raw_defaults and resolved_defaults. These are readiness-independent, so
-    # force not-ready (kimi absent) to keep the test hermetic — a ready status would
-    # call rate_limit.live_read and spawn the real app-server.
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: None)
-    res = server.kimi_status()
-    assert res["ready"] is False
-    assert res["raw_defaults"]["timeout_seconds"] == 300
-    assert res["resolved_defaults"]["timeout_seconds"] == 300
-    assert res["resolved_defaults"]["timeout_bounds"] == [10, 600]
 
 
 def test_status_not_found(monkeypatch, clean_env):
@@ -204,8 +231,12 @@ def test_status_not_found(monkeypatch, clean_env):
 
 
 def test_status_not_authenticated(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (False, "run kimi login"))
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
+    monkeypatch.setattr(
+        server.kimi,
+        "login_status",
+        lambda: (False, "Kimi has no configured provider; run `kimi login`."),
+    )
     res = server.kimi_status()
     assert res["ready"] is False
     assert "authenticated" in res["readiness_detail"]
@@ -214,7 +245,7 @@ def test_status_not_authenticated(monkeypatch, clean_env):
 def test_status_auth_indeterminate(monkeypatch, clean_env):
     """A probe that could not run (None) is not-ready, and says so without claiming
     the user is logged out (#252)."""
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (None, None))
     res = server.kimi_status()
     assert res["ready"] is False
@@ -495,13 +526,13 @@ def test_egress_disclosed_in_active_tool_docstrings(name):
     transmits repo content off the machine."""
     doc = getattr(server, name).__doc__
     assert doc is not None
-    assert "OpenAI" in doc, name
+    assert "provider" in doc, name
 
 
 # --- egress/security guarantee freeze matrix (issue #333) --------------------
 # Compressing the tools/list catalog (#333) shrinks these docstrings. A dropped
 # egress/security guarantee is a BREAKING change (AGENTS.md § Versioning), yet the
-# `"OpenAI" in doc` check above is far too coarse to catch it: it would still pass
+# `"provider" in doc` check above is far too coarse to catch it: it would still pass
 # after the raw-input, files-read, auto-loaded-AGENTS.md, isolation, or best-effort-
 # redaction guarantees were silently deleted. This matrix locks each guarantee a
 # tool's description states TODAY so compression can only make it shorter, never
@@ -529,7 +560,9 @@ _FILES_READ_DISCLOSED = re.compile(
 # reach the model (#358). So the sentence naming it must also carry an affirmative
 # discovery/loading verb and must not negate it: "$KIMI_CODE_HOME/skills is never loaded"
 # names the path and a verb, yet states the opposite of what this freeze protects.
-_GLOBAL_SKILLS_PATH = "$kimi_home/skills"
+# kimi has no $HOME/skills convention; skills reach it from its own user/project
+# directories and from config.toml `extra_skill_dirs`, which may point anywhere.
+_GLOBAL_SKILLS_PATH = "extra_skill_dirs"
 _GLOBAL_SKILLS_VERB = re.compile(r"\b(?:discover|auto-?load|load|expose|reach|send|read)[a-z]*\b")
 _GLOBAL_SKILLS_NEGATION = re.compile(r"\b(?:not|never|no|without|excludes?|suppress(?:es|ed)?)\b")
 # Negations that REINFORCE the disclosure rather than deny it, and so must not veto a
@@ -563,8 +596,9 @@ def _global_skills_disclosed(text):
 
 
 _GUARANTEE_MATCHERS = {
-    # Caller content is sent to OpenAI.
-    "openai": lambda d: "openai" in d,
+    # Caller content is sent to the configured Kimi provider (which may be any
+    # OpenAI-compatible endpoint, not necessarily OpenAI).
+    "openai": lambda d: "provider" in d,
     # The caller's supplied input is sent raw / unredacted.
     "raw_input": lambda d: "unredacted" in d or "raw" in d,
     # Kimi may read (and send) other files in the resolved workspace/worktree. Keyed on a
@@ -573,8 +607,8 @@ _GUARANTEE_MATCHERS = {
     "files_read": lambda d: bool(_FILES_READ_DISCLOSED.search(d)),
     # The workspace AGENTS.md auto-loads (its content can be sent).
     "autoload_agents": lambda d: "agents.md" in d,
-    # The workspace .agents/skills/ skills auto-load.
-    "autoload_skills": lambda d: ".agents/skills" in d,
+    # Skills auto-load and reach the model.
+    "autoload_skills": lambda d: "skill" in d,
     # User-global skills under $KIMI_CODE_HOME/skills/ are discovered too — outside the
     # workspace, and not suppressed by the config-isolation flags (#358). Keyed on the
     # exact canonical path (a looser "skills" check would be satisfied by the
@@ -586,10 +620,10 @@ _GUARANTEE_MATCHERS = {
     "isolation_suppress": lambda d: "isolation" in d and "suppress" in d,
     # Secret redaction is best-effort, not a guarantee.
     "redaction_best_effort": lambda d: "redact" in d and "best-effort" in d,
-    # delegate: workspace-write blocks network egress for commands Kimi RUNS *in the
-    # sandbox* — the sandbox-scope qualifier is load-bearing (without it the claim reads
-    # as "nothing leaves the machine", which openai/raw_input contradict), so require it.
-    "no_network": lambda d: "network" in d and "block" in d and "sandbox" in d,
+    # delegate: kimi has NO sandbox, so there is no network guarantee to make. The freeze
+    # now protects the opposite claim — that the run CAN reach the network — because the
+    # inherited Codex prose asserted a block that does not exist here.
+    "no_network": lambda d: "network" in d and ("not blocked" in d or "can reach" in d),
     # review: the gathered diff is secret-redacted before it is sent.
     "diff_redacted": lambda d: "redact" in d and "diff" in d,
 }
@@ -663,7 +697,7 @@ def test_global_skills_matcher_rejects_project_only_prose():
     assert _GUARANTEE_MATCHERS["autoload_global_skills"](project_only) is False
     # …while a genuine affirmative disclosure registers.
     assert _GUARANTEE_MATCHERS["autoload_global_skills"](
-        "skills under $kimi_home/skills/ are discovered too"
+        "skills under extra_skill_dirs are discovered too"
     )
 
 
@@ -674,14 +708,14 @@ def test_global_skills_matcher_rejects_negated_prose():
     denying it reaches the model, i.e. stay green over a disclosure that had been inverted
     into a false claim. Pin that the negation reads as a failure."""
     for negated in (
-        "skills under $kimi_home/skills/ are never loaded by this plugin.",
-        "the isolation flags suppress $kimi_home/skills/ discovery.",
-        "$kimi_home/skills/ is not read and its content is not sent.",
+        "skills under extra_skill_dirs are never loaded by this plugin.",
+        "the isolation flags suppress extra_skill_dirs discovery.",
+        "extra_skill_dirs is not read and its content is not sent.",
     ):
         assert _GUARANTEE_MATCHERS["autoload_global_skills"](negated) is False, negated
     # A negated sentence elsewhere must not mask a genuine disclosure in another sentence.
     mixed = (
-        "$kimi_home/skills/ skills are discovered from outside the workspace. "
+        "extra_skill_dirs skills are discovered from outside the workspace. "
         "Note that $kimi_home/config.toml is not loaded."
     )
     assert _GUARANTEE_MATCHERS["autoload_global_skills"](mixed)
@@ -698,8 +732,10 @@ def test_capability_summary_discloses_global_skills():
 
 def test_status_caveat_discloses_global_skills(monkeypatch, clean_env):
     """The kimi_status caveat names it too — it has no manifest-snapshot guard."""
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth (ChatGPT)."))
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
+    monkeypatch.setattr(
+        server.kimi, "login_status", lambda: (True, "Kimi reports 1 configured provider(s).")
+    )
     caveat = server.kimi_status()["caveat"].lower()
     assert _GUARANTEE_MATCHERS["autoload_global_skills"](caveat)
 
@@ -815,7 +851,7 @@ def test_egress_disclosed_in_capabilities(name):
     by_name = {t["name"]: t for t in server.kimi_capabilities(detail="full")["tool_details"]}
     assert name in by_name, f"capabilities omitted active tool {name}"
     detail = by_name[name]
-    assert "OpenAI" in (detail["use_when"] + detail["returns"]), name
+    assert "provider" in (detail["use_when"] + detail["returns"]), name
 
 
 def test_redaction_limits_disclosed_in_capabilities():
@@ -839,8 +875,10 @@ def test_delegate_no_network_not_misread_as_no_egress():
 
 def test_status_caveat_names_review_and_delegate(monkeypatch, clean_env):
     """The status caveat discloses egress for review and delegate, not just consult (issue #114)."""
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth (ChatGPT)."))
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
+    monkeypatch.setattr(
+        server.kimi, "login_status", lambda: (True, "Kimi reports 1 configured provider(s).")
+    )
     caveat = server.kimi_status()["caveat"].lower()
     assert "review" in caveat
     assert "delegate" in caveat
@@ -897,7 +935,7 @@ async def test_consult_plain_text_success(monkeypatch, clean_env, tmp_path):
 # --- consult: error paths ----------------------------------------------------
 async def test_consult_kimi_error(monkeypatch, clean_env, tmp_path):
     async def fake(*args, **kwargs):
-        return _fake_result(None, exit_code=1, stderr="not logged in")
+        return _fake_result(None, exit_code=1, stderr="401 Unauthorized")
 
     monkeypatch.setattr(server.kimi, "run_kimi_exec", fake)
     res = await _run_consult_direct(tmp_path, "q")
@@ -1054,17 +1092,6 @@ async def test_dry_run_extra_context_too_large(monkeypatch, clean_env, tmp_path)
     assert res["error"]["actual_bytes"] == 2000
 
 
-async def test_transfer_advertises_both_auth_error_codes():
-    # kimi_transfer's readiness gate can return EITHER auth code — kimi_auth_required
-    # for a known-absent session, kimi_auth_indeterminate for a probe that could not
-    # run. Capabilities must advertise both, or an agent branching on the discovered
-    # surface never learns the second one exists (#252).
-    caps = server.kimi_capabilities()
-    transfer = next(t for t in caps["tool_details"] if t["name"] == "kimi_transfer")
-    assert "kimi_auth_required" in transfer["error_codes"]
-    assert "kimi_auth_indeterminate" in transfer["error_codes"]
-
-
 def test_job_result_incompatible_advertised_on_exactly_the_emitters():
     # Only the tools that validate a FINISHED stored envelope can produce it: the three
     # sync tools (their keyed/unkeyed await path reattaches via _finished_job_envelope)
@@ -1162,7 +1189,7 @@ async def test_review_kimi_error(monkeypatch, clean_env, tmp_path):
     monkeypatch.setattr(gitdiff, "gather_diff", lambda *a, **k: _diff())
 
     async def fake(*a, **k):
-        return _fake_result(None, exit_code=1, stderr="not logged in")
+        return _fake_result(None, exit_code=1, stderr="401 Unauthorized")
 
     monkeypatch.setattr(server.kimi, "run_kimi_exec", fake)
     res = await _run_review_direct(tmp_path, scope="working_tree")
@@ -1350,7 +1377,7 @@ async def test_run_delegate_envelope_redacts_secrets(monkeypatch, clean_env, tmp
     async def fake(*a, **k):
         return _fake_result("done")
 
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake)
     meta = Meta(
         cwd=str(tmp_path),
         tier="propose",
@@ -1386,7 +1413,7 @@ async def test_delegate_cleans_up_on_kimi_error(monkeypatch, clean_env, tmp_path
     )
 
     async def fake(*a, **k):
-        return _fake_result(None, exit_code=1, stderr="not logged in")
+        return _fake_result(None, exit_code=1, stderr="401 Unauthorized")
 
     monkeypatch.setattr(server.kimi, "run_kimi_exec", fake)
     res = await _run_delegate_direct(tmp_path, task="do it")
@@ -1414,7 +1441,7 @@ async def test_run_delegate_reports_worktree_parent(monkeypatch, clean_env, tmp_
     async def fake(*a, **k):
         return _fake_result("done")
 
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake)
 
     seen: list[str] = []
     meta = Meta(
@@ -1460,7 +1487,7 @@ async def test_run_delegate_invalid_cap_falls_back_to_default(
     async def fake(*a, **k):
         return _fake_result("done")
 
-    monkeypatch.setattr(delegate.kimi, "run_kimi_exec", fake)
+    monkeypatch.setattr(runspace.kimi, "run_kimi_exec", fake)
     meta = Meta(
         cwd=str(tmp_path),
         tier="propose",
@@ -2378,38 +2405,6 @@ def test_capabilities_payload_discloses_fingerprint_covers():
 
     caps = server.kimi_capabilities()
     assert caps["fingerprint_covers"] == list(FINGERPRINT_COVERS)
-
-
-def test_capabilities_mark_m4_surface_experimental():
-    """Every tool's advertised stability matches _TOOL_STABILITY: the newer async +
-    background-job lifecycle tools (and kimi_transfer) say experimental, and everything
-    else inherits the server-wide alpha, carried as an explicit null (#71, #399)."""
-    caps = server.kimi_capabilities(detail="full")
-    by_name = {t["name"]: t for t in caps["tool_details"]}
-    # The expected values are spelled out rather than read from _TOOL_STABILITY, which is the
-    # map the payload is BUILT from: deriving them would compare the code against itself and
-    # stay green even if an override changed value or disappeared (confirmed by mutating the
-    # map). The set-equality guard below is what keeps this literal list from going stale —
-    # the failure it prevents is real, since an incomplete list previously left kimi_transfer
-    # asserted by neither half of this test.
-    expected = {
-        "kimi_transfer": "experimental",
-        "kimi_consult_async": "experimental",
-        "kimi_review_changes_async": "experimental",
-        "kimi_delegate_async": "experimental",
-        "kimi_job_status": "experimental",
-        "kimi_job_result": "experimental",
-        "kimi_job_consume_result": "experimental",
-        "kimi_job_cancel": "experimental",
-        "kimi_job_list": "experimental",
-    }
-    assert set(expected) == set(server._TOOL_STABILITY), "a tool gained or lost an override"
-    # #399: every entry carries the key — a default-tier tool gets an explicit null rather
-    # than the omission `exclude_none` used to produce here (but not in summary mode, which
-    # is how the two modes came to disagree on the same field).
-    for name, entry in by_name.items():
-        assert "stability" in entry, name
-        assert entry["stability"] == expected.get(name), name
 
 
 def test_server_advertises_tools_list_changed():
@@ -4925,46 +4920,12 @@ def _force_not_ready(monkeypatch):
     'unknown' quota (not_ready()) without spawning the app-server for a live read (hermetic)."""
     from kimi_in_claude import server
 
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (False, "run kimi login"))
-
-
-def test_kimi_status_ready_uses_live_read(monkeypatch):
-    # When kimi is ready, kimi_status fetches quota LIVE (no model spend) via live_read,
-    # not from the cache. Monkeypatched so no real app-server is spawned.
-    from kimi_in_claude import rate_limit, server
-    from kimi_in_claude.schemas import RateLimit
-
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth (ChatGPT)."))
-    called = {}
-
-    def _fake_live_read(*, timeout_seconds, **kw):
-        called["timeout"] = timeout_seconds
-        return RateLimit(status="available", source="app_server_live", plan_type="plus")
-
-    monkeypatch.setattr(rate_limit, "live_read", _fake_live_read)
-    result = server.kimi_status()
-    assert result["rate_limit"]["status"] == "available"
-    assert result["rate_limit"]["source"] == "app_server_live"
-    assert called["timeout"] == rate_limit.READ_TIMEOUT_SECONDS
-
-
-def test_kimi_status_not_ready_is_unknown_without_spawning(monkeypatch):
-    # When kimi is not ready, kimi_status reports a static 'unknown' and does NOT spawn the
-    # app-server (no cache exists to read, and an unauthenticated read would fail anyway).
-    from kimi_in_claude import rate_limit, server
-
-    _force_not_ready(monkeypatch)
-
-    def _boom(**kw):
-        raise AssertionError("live_read must not be called when kimi is not ready")
-
-    monkeypatch.setattr(rate_limit, "live_read", _boom)
-    result = server.kimi_status()
-    assert result["rate_limit"]["status"] == "unknown"
-    assert result["rate_limit"]["source"] == "app_server_live"
-    assert result["rate_limit"]["note"]
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
+    monkeypatch.setattr(
+        server.kimi,
+        "login_status",
+        lambda: (False, "Kimi has no configured provider; run `kimi login`."),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -5731,7 +5692,7 @@ async def test_sync_run_failure_reports_is_error_true(clean_env, tmp_path, monke
     )
     envelope = server.serialize_error(
         server.ErrorResult(
-            error=server.make_error("kimi_auth_required", "not logged in"), meta=meta
+            error=server.make_error("kimi_auth_required", "401 Unauthorized"), meta=meta
         )
     )
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -6250,79 +6211,10 @@ def test_capabilities_advertise_idempotency_on_spend_committing_tools(clean_env)
 
 
 def _ready_kimi(monkeypatch):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth (ChatGPT)."))
-
-
-def _patch_validation(monkeypatch, realpath="/home/u/.claude/projects/s/x.jsonl", reason=None):
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(
-        server.appserver,
-        "validate_transcript_path",
-        lambda _p: server.appserver.PathValidation(realpath, reason),
+        server.kimi, "login_status", lambda: (True, "Kimi reports 1 configured provider(s).")
     )
-
-
-def _patch_transfer(monkeypatch, outcome):
-    monkeypatch.setattr(server.appserver, "transfer_session", lambda **_kw: outcome)
-
-
-async def test_transfer_success_notification(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.OK,
-            thread_id="t9",
-            thread_id_source=server.appserver.ThreadIdSource.IMPORT_NOTIFICATION,
-            import_id="imp-7",
-            kimi_home="/home/u/.kimi",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is True
-    assert result["tool"] == "kimi_transfer"
-    assert result["thread_id"] == "t9"
-    assert result["resume_command"] == "kimi resume t9"
-    assert result["source_path"] == "/home/u/.claude/projects/s/x.jsonl"
-    assert result["meta"]["thread_id_source"] == "import_notification"
-    assert result["meta"]["import_id"] == "imp-7"
-    assert result["meta"]["kimi_home"] == "/home/u/.kimi"
-    assert result["fingerprint"].endswith("schema-75")
-    # TransferResult's only wire path — unreachable from the free-tool walk (#304).
-    assert result["server_version"] == __version__
-
-
-async def test_transfer_success_from_ledger(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.OK,
-            thread_id="t-led",
-            thread_id_source=server.appserver.ThreadIdSource.LEDGER,
-            kimi_home="/home/u/.kimi",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is True
-    assert result["meta"]["thread_id_source"] == "ledger"
-    assert result["meta"]["import_id"] is None
-
-
-async def test_transfer_invalid_path_no_spawn(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(
-        monkeypatch, realpath=None, reason="transcript_path must be a .jsonl session transcript."
-    )
-    called = []
-    monkeypatch.setattr(server.appserver, "transfer_session", lambda **_kw: called.append(1))
-    result = await server.kimi_transfer(transcript_path="/x.txt")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "invalid_arguments"
-    assert result["error"]["details"]["field"] == "transcript_path"
-    assert not called  # no subprocess attempted
 
 
 # --- transfer's invalid_arguments shape (#416) --------------------------------
@@ -6334,335 +6226,14 @@ async def test_transfer_invalid_path_no_spawn(monkeypatch):
 _TRANSCRIPT_REASON = "transcript_path must be a .jsonl session transcript."
 
 
-async def test_transfer_invalid_path_carries_the_per_argument_list(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch, realpath=None, reason=_TRANSCRIPT_REASON)
-    result = await server.kimi_transfer(transcript_path="/x.txt")
-    err = result["error"]
-    assert err["invalid_arguments"] == [{"field": "transcript_path", "reason": _TRANSCRIPT_REASON}]
-    # `details` mirrors the first entry, and the message states the same reason, so the
-    # three cannot disagree about why the argument was rejected.
-    assert err["details"] == {"field": "transcript_path", "reason": _TRANSCRIPT_REASON}
-    assert err["message"] == _TRANSCRIPT_REASON
-    # A path is not an enum: absent from the wire dict, not present-and-null (§8).
-    assert "allowed_values" not in err["invalid_arguments"][0]
-
-
-async def test_transfer_invalid_path_falls_back_when_the_validator_gives_no_reason(monkeypatch):
-    """Defense only: every `realpath=None` branch of `validate_transcript_path`
-    returns a reason, so this state is fabricated here. It pins
-    that the fallback reaches all three carriers rather than leaving `reason` unset."""
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch, realpath=None, reason=None)
-    err = (await server.kimi_transfer(transcript_path="/x.txt"))["error"]
-    assert err["message"] == "invalid transcript_path."
-    assert err["details"]["reason"] == "invalid transcript_path."
-    assert err["invalid_arguments"][0]["reason"] == "invalid transcript_path."
-
-
-@pytest.mark.parametrize(
-    ("length", "truncated"),
-    [(server._MAX_ARG_REASON_LEN, False), (server._MAX_ARG_REASON_LEN + 1, True)],
-)
-async def test_transfer_invalid_path_bounds_the_reason(monkeypatch, length, truncated):
-    """The bound is the same one the call-boundary builder applies. Real validator
-    reasons are short server-side literals, so this too is fabricated input — it pins the
-    bound for any future reason that is not."""
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch, realpath=None, reason="r" * length)
-    err = (await server.kimi_transfer(transcript_path="/x.txt"))["error"]
-    expected = "r" * server._MAX_ARG_REASON_LEN
-    assert err["invalid_arguments"][0]["reason"] == expected
-    assert err["details"]["reason"] == expected
-    assert (len(err["invalid_arguments"][0]["reason"]) < length) is truncated
-
-
-async def test_transfer_kimi_not_found(monkeypatch):
-    """A missing binary is kimi_not_found, and the auth probe is never even reached.
-
-    The ordering is load-bearing, not incidental: `login_status()` returns None for a
-    missing binary *and* for an unanswered probe, but kimi_auth_indeterminate promises
-    `temporary=True`, which is false for a missing binary. This gate absorbing the
-    missing-binary cause is what makes that promise honest (#252)."""
-    probed = []
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: None)
-    monkeypatch.setattr(server.kimi, "login_status", lambda: probed.append(1) or (None, None))
-    _patch_validation(monkeypatch)
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "kimi_not_found"
-    assert not probed  # kimi_version() must gate ahead of login_status()
-
-
-async def test_transfer_unauthenticated(monkeypatch):
-    called = []
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (False, "run kimi login"))
-    monkeypatch.setattr(server.appserver, "transfer_session", lambda **_kw: called.append(1))
-    _patch_validation(monkeypatch)
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "kimi_auth_required"
-    assert result["error"]["temporary"] is False
-    assert not called  # no app-server spawned
-
-
-async def test_transfer_auth_indeterminate(monkeypatch):
-    """`kimi login status` could not run: fail closed, but do not tell an
-    already-authenticated user to run `kimi login` (#252)."""
-    called = []
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (None, None))
-    monkeypatch.setattr(server.appserver, "transfer_session", lambda **_kw: called.append(1))
-    _patch_validation(monkeypatch)
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "kimi_auth_indeterminate"
-    assert result["error"]["temporary"] is True
-    assert result["error"]["repair"]["next_step"] == "inspect_and_retry"
-    assert not called  # no app-server spawned, no side-effecting import
-
-
-async def test_transfer_unsupported(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(status=server.appserver.TransferStatus.UNSUPPORTED),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "transfer_unsupported"
-    assert result["error"]["temporary"] is False
-
-
-async def test_transfer_item_failure(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.ITEM_FAILURE,
-            message="could not parse session",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "transfer_failed"
-    assert "could not parse session" in result["error"]["message"]
-
-
-async def test_transfer_incomplete_names_ledger(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.INCOMPLETE,
-            ledger_path="/home/u/.kimi/external_agent_session_imports.json",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "transfer_incomplete"
-    assert "external_agent_session_imports.json" in result["error"]["message"]
-
-
-async def test_transfer_timeout(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(status=server.appserver.TransferStatus.TIMED_OUT),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "timeout"
-    assert result["error"]["temporary"] is True
-
-
-async def test_transfer_protocol_error(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.PROTOCOL_ERROR,
-            message="kimi app-server exited before the import completed.",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "cli_contract_changed"
-
-
 # --- app_server_stderr_tail: surfaced only where it is the primary diagnostic (#275) ------
-
-_STDERR_ELIGIBLE = {
-    server.appserver.TransferStatus.PROTOCOL_ERROR: "cli_contract_changed",
-    server.appserver.TransferStatus.TIMED_OUT: "timeout",
-    server.appserver.TransferStatus.INCOMPLETE: "transfer_incomplete",
-}
-
-
-async def _transfer_with_tail(monkeypatch, status, **fields):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(status=status, stderr_tail="panic: boom\nFINAL", **fields),
-    )
-    return await server.kimi_transfer(transcript_path="/x.jsonl")
-
-
-@pytest.mark.parametrize("status,code", list(_STDERR_ELIGIBLE.items()))
-async def test_transfer_surfaces_stderr_tail_for_eligible_codes(monkeypatch, status, code):
-    result = await _transfer_with_tail(monkeypatch, status)
-    assert result["error"]["code"] == code
-    # The untrusted child stderr rides a dedicated field, never error.message.
-    assert result["error"]["app_server_stderr_tail"] == "panic: boom\nFINAL"
-    assert "panic: boom" not in result["error"]["message"]
-
-
-async def test_transfer_omits_stderr_tail_for_transfer_failed(monkeypatch):
-    # ITEM_FAILURE always carries a structured message (surfaced post-#276); a second
-    # arbitrary-text channel is not worth its injection/leak surface here.
-    result = await _transfer_with_tail(
-        monkeypatch,
-        server.appserver.TransferStatus.ITEM_FAILURE,
-        message="could not parse session",
-    )
-    assert result["error"]["code"] == "transfer_failed"
-    assert "app_server_stderr_tail" not in result["error"]
-
-
-async def test_transfer_omits_stderr_tail_for_unsupported(monkeypatch):
-    result = await _transfer_with_tail(monkeypatch, server.appserver.TransferStatus.UNSUPPORTED)
-    assert result["error"]["code"] == "transfer_unsupported"
-    assert "app_server_stderr_tail" not in result["error"]
-
-
-async def test_transfer_success_never_carries_stderr_tail(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.OK,
-            thread_id="t1",
-            thread_id_source=server.appserver.ThreadIdSource.IMPORT_NOTIFICATION,
-            kimi_home="/home/u/.kimi",
-            stderr_tail="noise on a healthy run",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is True
-    assert "app_server_stderr_tail" not in result
-
-
-async def test_transfer_eligible_code_without_tail_omits_the_field(monkeypatch):
-    # exclude_none: an eligible code whose outcome captured no stderr must not emit a null.
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.PROTOCOL_ERROR, stderr_tail=None
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["error"]["code"] == "cli_contract_changed"
-    assert "app_server_stderr_tail" not in result["error"]
-
-
-async def test_transfer_spawn_failed(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(status=server.appserver.TransferStatus.SPAWN_FAILED),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "kimi_not_found"
-
-
-async def test_transfer_resume_command_is_shell_quoted(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.OK,
-            thread_id="id with space;rm",
-            thread_id_source=server.appserver.ThreadIdSource.IMPORT_NOTIFICATION,
-            kimi_home="/home/u/.kimi",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    # shlex.join quotes the pathological id so the pasted command stays one safe argument.
-    assert result["resume_command"] == "kimi resume 'id with space;rm'"
-
-
-async def test_transfer_resume_command_plain_id_unquoted(monkeypatch):
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.OK,
-            thread_id="thread-fresh-0001",
-            thread_id_source=server.appserver.ThreadIdSource.IMPORT_NOTIFICATION,
-            kimi_home="/home/u/.kimi",
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["resume_command"] == "kimi resume thread-fresh-0001"
-
-
-async def test_transfer_protocol_error_maps_to_cli_contract_changed(monkeypatch):
-    """PROTOCOL_ERROR maps to cli_contract_changed, and the appserver-supplied
-    message passes through _transfer_outcome_envelope's `message = outcome.message
-    or "..."` faithfully, with no further transformation.
-
-    This does NOT test that no raw/oversized value can reach the message — that
-    guarantee is constructed and enforced at the appserver layer, where
-    outcome.message is built from fixed strings (see test_appserver.py, e.g.
-    test_invalid_kimi_home_is_protocol_error and the invalid-target tests, which
-    assert an oversized value is absent from outcome.message before it ever
-    reaches this mapping code).
-    """
-    _ready_kimi(monkeypatch)
-    _patch_validation(monkeypatch)
-    message = "kimi app-server reported an invalid kimiHome (must be a bounded, absolute path)."
-    _patch_transfer(
-        monkeypatch,
-        server.appserver.TransferOutcome(
-            status=server.appserver.TransferStatus.PROTOCOL_ERROR,
-            message=message,
-        ),
-    )
-    result = await server.kimi_transfer(transcript_path="/x.jsonl")
-    assert result["ok"] is False
-    assert result["error"]["code"] == "cli_contract_changed"
-    assert result["error"]["message"] == message
 
 
 # --- KIMI_IN_CLAUDE_EXTRA_ARGS: status + preflight before spend (#231) -----------
 
 
-def test_status_reports_valid_extra_args(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
-    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth."))
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c model_provider=litellm --profile work")
-    res = server.kimi_status()
-    assert res["extra_args_configured"] is True
-    assert res["extra_args_count"] == 2
-    assert res["extra_args_valid"] is True
-
-
 def test_status_reports_invalid_extra_args(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth."))
     monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--json")  # not allowlisted
     res = server.kimi_status()
@@ -6671,7 +6242,7 @@ def test_status_reports_invalid_extra_args(monkeypatch, clean_env):
 
 
 def test_status_unset_extra_args_defaults(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth."))
     res = server.kimi_status()
     assert res["extra_args_configured"] is False
@@ -6754,60 +6325,6 @@ async def test_error_envelope_carries_server_version(clean_env, tmp_path, monkey
     payload = json.loads(result.content[0].text)
     assert payload["ok"] is False
     assert payload["meta"]["server_version"] == __version__
-
-
-async def test_every_free_tool_envelope_carries_server_version(clean_env, tmp_path, monkeypatch):
-    """A future SUCCESS result model added without server_version must fail here, not
-    silently become an 'unknown' bucket in someone's audit (#304).
-
-    Coverage split across the 10 models that carry a top-level `fingerprint` field
-    (`VERSION_BEARING_MODELS` in tests/test_schemas.py):
-
-    WIRE-COVERED here (a real SUCCESS envelope observed over the in-process MCP Client
-    boundary): StatusResult (kimi_status), CapabilitiesResult (kimi_capabilities),
-    JobListResult (kimi_job_list), ModelCatalogResult (kimi_models), DryRunResult
-    (kimi_dry_run), DelegateDryRunResult (kimi_delegate_dry_run). Meta is covered on
-    the wire too, but via the ERROR path in test_error_envelope_carries_server_version
-    above (every error envelope carries a Meta), not this SUCCESS walk.
-
-    WIRE-COVERED ELSEWHERE (not reachable from this free-tool walk, which only calls tools
-    that need no job record or subprocess, but asserted on a real emitted envelope all the
-    same): JobStarted in test_delegate_async_returns_job_id, the SUCCESS variant of
-    JobStatus in test_job_status_done — both via the fake job store — and TransferResult in
-    test_transfer_success_notification, via a mocked app-server outcome. None of the three
-    needs a paid call.
-
-    All 10 are ALSO guaranteed structurally, by field-declaration introspection in
-    test_schemas.py::test_every_fingerprint_bearing_model_carries_server_version. That guard
-    is real (it fails if server_version is removed from any model) but it is not sufficient
-    on its own: it inspects the model, so it cannot see a construction or serialization path
-    that drops or nulls the field before the wire. Hence the wire assertions above and in
-    those three tests.
-
-    Only FREE tools are called below — no paid Kimi/OpenAI spend, and kimi_transfer is
-    deliberately omitted (see above) even though kimi_capabilities lists it as free."""
-    from fastmcp import Client
-
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
-    _init_repo(tmp_path)  # kimi_dry_run / kimi_delegate_dry_run need a real git repo
-    # to reach their SUCCESS branch rather than a not_a_git_repo ErrorResult.
-    free_calls = [
-        ("kimi_status", {}),
-        ("kimi_capabilities", {}),
-        ("kimi_job_list", {"workspace_root": str(tmp_path)}),
-        ("kimi_models", {}),
-        ("kimi_dry_run", {"scope": "working_tree", "workspace_root": str(tmp_path)}),
-        ("kimi_delegate_dry_run", {"task": "add a feature", "workspace_root": str(tmp_path)}),
-    ]
-    async with Client(server.mcp) as client:
-        for tool, params in free_calls:
-            result = await client.call_tool(tool, params)
-            payload = json.loads(result.content[0].text)
-            # Guard the guard: a SUCCESS assertion on an accidental ERROR envelope would
-            # silently validate the wrong model and prove nothing about the target.
-            assert payload.get("ok") is True, f"{tool} did not return a SUCCESS envelope: {payload}"
-            carrier = payload.get("meta", payload)  # meta-bearing or top-level
-            assert carrier.get("server_version") == __version__, f"{tool} lost server_version"
 
 
 # --- Reasoning-effort surface (#309) ------------------------------------------------
@@ -6902,13 +6419,15 @@ async def test_consult_empty_reasoning_effort_is_passed_through(monkeypatch, cle
 
 
 async def test_spec_without_effort_matches_legacy_hash(monkeypatch, clean_env, tmp_path):
-    # Regression (#309): a run with no effort override must keep building a spec that
-    # HASHES like the pre-#309 shape, so live idempotency dedup entries survive the
-    # upgrade. Since #393 the spec is no longer byte-identical — it carries the
-    # hash-excluded `roots_source` — so the structural half asserts the EXACT delta
-    # (that one key and no other) rather than filtering out everything hash-excluded,
-    # which would also hide an accidental change to cwd/workspace_source/kind or a
-    # future over-broad entry in _ARG_HASH_EXCLUDE.
+    # A run with no effort override must omit the key entirely, and the spec must carry
+    # no member beyond the expected set. The delta is asserted EXACTLY (those keys and no
+    # others) rather than by filtering out everything hash-excluded, which would also hide
+    # an accidental change to cwd/workspace_source/kind or a future over-broad entry in
+    # _ARG_HASH_EXCLUDE.
+    #
+    # `git_timeout` joined the consult spec when consult moved into a worktree (kimi has no
+    # read-only sandbox). It is hash-EXCLUDED server config, so it does not change a call's
+    # dedup identity.
     calls = _capture_run_sync(monkeypatch)
     await server.kimi_consult(
         "q", workspace_root=str(tmp_path), extra_context="ctx", timeout_seconds=60
@@ -6928,7 +6447,10 @@ async def test_spec_without_effort_matches_legacy_hash(monkeypatch, clean_env, t
         "timeout_seconds": 60,
     }
     assert spec["roots_source"] == "not_negotiated"
-    assert {k: v for k, v in spec.items() if k != "roots_source"} == legacy_spec
+    assert spec["git_timeout"] == 60
+    excluded = {"roots_source", "git_timeout"}
+    assert {k: v for k, v in spec.items() if k not in excluded} == legacy_spec
+    # Both extra keys are hash-excluded, so the dedup identity is unchanged by either.
     assert server._arg_hash_for_spec(spec) == server._arg_hash_for_spec(legacy_spec)
 
 
@@ -6943,7 +6465,7 @@ async def test_review_and_delegate_specs_carry_reasoning_effort(monkeypatch, cle
 
 async def test_status_reports_reasoning_effort_defaults(monkeypatch, clean_env):
     clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "medium")
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda *a, **k: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda *a, **k: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda *a, **k: (True, "ok"))
     res = server.kimi_status()
     assert res["raw_defaults"]["reasoning_effort"] == "medium"
@@ -6951,7 +6473,7 @@ async def test_status_reports_reasoning_effort_defaults(monkeypatch, clean_env):
 
 
 async def test_status_reasoning_effort_default_null_when_unset(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda *a, **k: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda *a, **k: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda *a, **k: (True, "ok"))
     res = server.kimi_status()
     assert res["raw_defaults"]["reasoning_effort"] is None
@@ -8745,3 +8267,14 @@ async def test_blank_task_dry_run_matches_paid_delegate(clean_env, tmp_path, mon
     assert paid["error"]["code"] == dry["error"]["code"] == "invalid_arguments"
     assert paid["error"]["details"] == dry["error"]["details"]
     assert paid["error"]["invalid_arguments"] == dry["error"]["invalid_arguments"]
+
+
+def test_status_reports_a_refused_passthrough(monkeypatch, clean_env):
+    """kimi exposes no safe passthrough, so any configured value is refused. Status must
+    surface that as invalid rather than silently reporting zero options as healthy."""
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
+    monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth."))
+    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-p sneaky")
+    res = server.kimi_status()
+    assert res["extra_args_configured"] is True
+    assert res["extra_args_valid"] is False

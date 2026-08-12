@@ -57,7 +57,11 @@ OUTPUT_FORMAT_FLAG = "--output-format"
 OUTPUT_FORMAT_JSON = "stream-json"
 
 # Model selection takes a config.toml ALIAS, not a raw provider model id.
-MODEL_FLAG = "-m"
+# The LONG form is deliberate: preflight parses long flags only out of `kimi --help`, so a
+# short `-m` would never be recognized as supported and the override would be help-gated
+# away on every run — silently, since a dropped model is reported but not an error. kimi
+# accepts both spellings (`-m, --model <model>` in its help).
+MODEL_FLAG = "--model"
 
 # Per-run agent profile. This is how consult/review become genuinely read-only — see
 # READ_ONLY_AGENT_TOOLS. Cannot be combined with --session/--continue.

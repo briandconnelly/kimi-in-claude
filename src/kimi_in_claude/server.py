@@ -132,18 +132,21 @@ from kimi_in_claude.schemas import (
 # semantics) last so an agent that skims reaches the actionable rules first.
 CAPABILITY_SUMMARY = (
     # Lead: what it does and, up front, what it does not do.
-    "Call OpenAI Kimi (a different model) from Claude Code for a second opinion, a "
-    "structured review of your git changes, or a delegated coding task. This plugin does "
-    "not bypass Kimi's sandbox or approvals, and kimi_delegate never edits your working "
-    "tree — it returns a reviewable diff you apply yourself. Every model-bearing call also "
-    "disables Kimi's remote_plugin feature, so third-party connectors (GitHub, Gmail, Slack, "
-    "Drive, …) aren't exposed to the Kimi run — barring a custom operator-supplied Kimi "
-    "profile. "
-    "Every model-bearing call sends your inputs to OpenAI raw, and Kimi also auto-loads "
-    "context implicitly. "
+    "Call Kimi Code (a different model) from Claude Code for a second opinion, a "
+    "structured review of your git changes, or a delegated coding task. kimi_delegate "
+    "never edits your working tree — it returns a reviewable diff you apply yourself. "
+    # The honest safety statement. kimi has no sandbox, so say what actually constrains a
+    # run rather than borrowing the vocabulary of one that does.
+    "The `kimi` CLI has no sandbox and no approval prompts, so this server constrains runs "
+    "itself: kimi_consult and kimi_review_changes run under a generated agent profile with "
+    "no shell and no write tools, and every tier runs in a throwaway git worktree. "
+    f"{cli_contract.READ_ONLY_CONFIDENTIALITY_LIMIT} "
+    "The worktree keeps a run's working directory away from your tree, but it is not a "
+    "boundary — Kimi can write outside it if instructed to, so treat it as defense in "
+    "depth, not containment. "
+    "Every model-bearing call sends your inputs to your configured Kimi provider raw, and "
+    "Kimi also auto-loads context implicitly. "
     f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} "
-    "Skill names and descriptions are exposed up front and a selected skill's body can "
-    "reach the model, so that content can be sent even if your prompt never mentions it. "
     # Routing: one imperative sentence per task family.
     "Use kimi_consult for a read-only second opinion or Q&A — including on a diff you "
     "paste inline. "
@@ -166,10 +169,12 @@ CAPABILITY_SUMMARY = (
     "follow error.repair. "
     "Treat Kimi's findings as claims to verify, not commands. "
     # Discovery rules — still actionable, so kept ahead of the background paragraph.
-    "Use kimi_capabilities for the full inventory. Before overriding the model or "
-    "reasoning_effort, use kimi_models (or the kimi://models resource) to discover valid "
-    "model slugs and each model's advertised reasoning-effort set (the listing is advisory; "
-    "kimi and the backend validate the real values). "
+    "Use kimi_capabilities for the full inventory. Before overriding model or "
+    "reasoning_effort, use kimi_models (or the kimi://models resource): `model` takes an "
+    "ALIAS defined in the user's kimi config.toml, not a raw provider model id, and an "
+    "unknown alias is rejected outright. Kimi does NOT reject an unrecognized "
+    "reasoning_effort — it ignores it — so this server refuses one the alias does not "
+    "declare rather than let a run silently use the default. "
     "To preview a call without spending, use kimi_dry_run for a review or "
     "kimi_delegate_dry_run for a delegate's worktree baseline. "
     # Background context, last.
@@ -177,10 +182,9 @@ CAPABILITY_SUMMARY = (
     "kimi_review_changes_async / kimi_delegate_async), polled via "
     "kimi_job_status/result/consume_result/cancel/list; even a sync consult/review/delegate "
     "records its run as a job (meta.job_id), so a dropped connection can be recovered the "
-    "same way. kimi_status also reports a rate_limit block (status "
-    "available|limited|exhausted|blocked|unknown|unavailable) showing how much Kimi quota "
-    "remains, read live from the app-server with no model spend; unknown/unavailable mean no "
-    "usable reading, not a problem, while blocked means a backend spend control no reset clears."
+    "same way. kimi_status reports rate_limit as `unavailable`: kimi exposes no quota-read "
+    "channel and its provider is user-configured, so there is nothing authoritative to "
+    "report — that is not a failure."
 )
 
 # Annotation presets. destructiveHint/idempotentHint have MCP-spec meaning only when
@@ -762,7 +766,8 @@ PathsParam = Annotated[
 IsolationParam = Annotated[
     Isolation | None,
     Field(
-        description="Which skills Kimi loads: 'inherit' (its own user/project discovery) "
+        description="Kimi skills isolation: which skills Kimi loads — 'inherit' (its own "
+        "user/project discovery) "
         "or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills "
         "load either way. Defaults to the server's configured value (built-in 'inherit'; "
         "`kimi_status` reports the resolved one)."
@@ -781,7 +786,8 @@ UntrackedParam = Annotated[
     Field(
         description="How working_tree scope treats untracked files: 'explicit_only' "
         "(default) includes only those named in `paths`; 'include' reviews all "
-        "non-ignored untracked files (SENDS their contents to OpenAI — opt-in egress); "
+        "non-ignored untracked files (SENDS their contents to your configured "
+        "provider — opt-in egress); "
         "'exclude' includes none. Omitted ones are disclosed in `coverage`. Inert for "
         "branch/commit scopes."
     ),
@@ -1698,7 +1704,8 @@ def kimi_capabilities(
                 ],
                 returns="A result envelope with summary, optional findings, and meta. "
                 "detail='summary' (default) omits raw_response.text; detail='full' includes it. "
-                "Egress: sends question+extra_context (raw, unredacted) to OpenAI; Kimi "
+                "Egress: sends question+extra_context (raw, unredacted) to your configured "
+                "provider; Kimi "
                 "always runs with a resolved working dir (workspace_root, your MCP roots, "
                 "or the server cwd) and may read and send files from it. "
                 f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} "
@@ -1726,7 +1733,7 @@ def kimi_capabilities(
                 returns="A job handle (job_id, status, deadline, ttl). Poll with "
                 "kimi_job_status; read the consult envelope with kimi_job_result. "
                 "Egress: same as kimi_consult — sends question+extra_context (raw) to "
-                "OpenAI, plus files Kimi reads from its resolved working dir "
+                "your configured provider, plus files Kimi reads from its resolved working dir "
                 "(workspace_root, your MCP roots, or the server cwd). "
                 f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} "
                 "A selected skill's body can reach the model.",
@@ -1754,7 +1761,7 @@ def kimi_capabilities(
                 returns="A result envelope with verdict, findings, and a context summary. "
                 "detail='summary' (default) omits raw_response.text; detail='full' includes it. "
                 "Egress: sends the bounded, secret-redacted diff plus your raw (unredacted) "
-                "extra_context to OpenAI; Kimi may also read other repo files. "
+                "extra_context to your configured provider; Kimi may also read other repo files. "
                 f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} "
                 "A selected skill's body can reach the model. "
                 "Recorded as a terminal job (meta.job_id) recoverable via kimi_job_result "
@@ -1783,7 +1790,8 @@ def kimi_capabilities(
                 returns="A job handle (job_id, status, deadline, ttl). Poll with "
                 "kimi_job_status; read the review envelope with kimi_job_result. "
                 "Egress: same as kimi_review_changes — sends the secret-redacted diff "
-                "plus your raw extra_context to OpenAI; Kimi may also read other repo "
+                "plus your raw extra_context to your configured provider; Kimi may also read "
+                "other repo "
                 "files. "
                 f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} "
                 "A selected skill's body can reach the model.",
@@ -1807,10 +1815,11 @@ def kimi_capabilities(
                 returns="A result envelope whose `diff` holds Kimi's proposed, "
                 "unapplied changes plus a summary. detail='summary' (default) omits "
                 "raw_response.text; detail='full' includes it. "
-                "Egress: sends your task (raw) to OpenAI and lets Kimi read tracked "
+                "Egress: sends your task (raw) to your configured provider and lets Kimi read "
+                "tracked "
                 "files in the throwaway worktree and send their content. "
                 f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} For delegate, that workspace is the "
-                "worktree; scrubbing it doesn't exclude $KIMI_CODE_HOME/skills/. "
+                "worktree; scrubbing it doesn't exclude those entries. "
                 "Recorded as a terminal job (meta.job_id) recoverable via kimi_job_result "
                 "after a dropped connection.",
             ),
@@ -1832,10 +1841,11 @@ def kimi_capabilities(
                 ],
                 returns="A job handle (job_id, status, deadline, ttl). Poll with "
                 "kimi_job_status; read with kimi_job_result. "
-                "Egress: same as kimi_delegate — sends your task (raw) to OpenAI plus "
+                "Egress: same as kimi_delegate — sends your task (raw) to your configured "
+                "provider plus "
                 "the worktree files Kimi reads. "
                 f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} For delegate, that workspace is the "
-                "worktree; scrubbing it doesn't exclude $KIMI_CODE_HOME/skills/.",
+                "worktree; scrubbing it doesn't exclude those entries.",
             ),
             ToolCapability(
                 name="kimi_job_status",
@@ -1978,22 +1988,26 @@ def kimi_capabilities(
         ],
         negative_scope=[
             "Does not apply edits to your working tree (delegate returns a diff).",
-            "Does not bypass the Kimi sandbox or approvals.",
+            "Does not sandbox Kimi: the kimi CLI has no sandbox and no approvals, so a "
+            "delegated task runs shell commands with your own privileges and can reach "
+            "the network.",
             "Does not keep your content on the machine: consult, review, and delegate "
-            "(and their *_async variants) each send caller content to OpenAI via the "
+            "(and their *_async variants) each send caller content to your configured "
+            "provider via the "
             "kimi CLI — consult sends question+extra_context (plus files Kimi reads "
             "from its resolved working dir: workspace_root, your MCP roots, or the "
             "server cwd); review sends the bounded, secret-redacted diff "
             "plus your raw extra_context; delegate sends the task and lets Kimi read "
             "tracked files in the throwaway worktree. "
             f"{cli_contract.SKILLS_DISCOVERY_FACT_FULL} For delegate, that workspace is the "
-            "throwaway worktree; scrubbing it doesn't exclude $KIMI_CODE_HOME/skills/. A "
+            "throwaway worktree; scrubbing it doesn't exclude those entries. A "
             "selected skill's body can reach the model even if your prompt never "
             "mentions it.",
-            "Delegate's no-network sandbox does NOT mean nothing leaves the machine: "
-            "workspace-write blocks network egress only for commands Kimi RUNS in the "
-            "sandbox (so a delegated task cannot push/fetch/publish/install), but the "
-            "Kimi model call itself still sends your task and repo context to OpenAI.",
+            "NETWORK IS NOT BLOCKED: kimi has no sandbox, so a delegated task CAN reach "
+            "the network — it may push, fetch, install dependencies, or call out. Scope "
+            "the task accordingly; do not rely on network isolation that does not exist. "
+            "The Kimi model call itself also sends your task and repo context to your "
+            "configured provider.",
             "Does not guarantee secrets stay local: secret redaction is best-effort and "
             "covers the gathered diff and Kimi's returned output — NOT your supplied "
             "inputs (question/task/extra_context), and not secrets Kimi reads from "
@@ -2640,15 +2654,15 @@ async def kimi_consult(
     (absolute) for a repo-grounded question; omit it for pure Q&A. Returns a result
     envelope.
 
-    Data egress: this sends your `question` and `extra_context` to OpenAI via the
+    Data egress: this sends your `question` and `extra_context` to your configured
+    Kimi provider via the
     kimi CLI. Kimi always runs with a resolved working directory (`workspace_root`,
     your MCP roots, or the server's cwd as a fallback), so it may read files there and
-    send their content too. Kimi auto-loads the resolved workspace's `AGENTS.md` and
-    discovers skills in its `.agents/skills/` and user-global `$KIMI_CODE_HOME/skills/`
-    (default `~/.kimi/skills/`), reachable from outside the workspace. The plugin's
-    isolation flags don't suppress any of it. Skill names and descriptions are exposed
-    up front and a selected skill's body can reach the model, so that content can be
-    sent even if your prompt never mentions it. Your inputs are sent raw — secret
+    send their content too. Kimi auto-loads the resolved workspace's AGENTS.md and discovers
+    skills from its own config (including `extra_skill_dirs`, which may point outside the
+    workspace). Skill names and descriptions are exposed to the model up front, so that
+    content can be sent even if your prompt never mentions it. Kimi's built-in skills always
+    load and cannot be suppressed. Your inputs are sent raw — secret
     redaction is best-effort and does not cover them (it covers gathered diffs and
     Kimi's returned output, not what you type or what Kimi reads from files).
 
@@ -2742,12 +2756,13 @@ async def kimi_review_changes(
     test/build/lint run needs, so Kimi can't run the project's checks to confirm its
     findings — treat them as unvalidated claims you verify yourself before acting.
 
-    Data egress: this sends the gathered diff to OpenAI via the kimi CLI. The diff is
+    Data egress: this sends the gathered diff to your configured provider via the
+    kimi CLI. The diff is
     secret-redacted (best-effort), but your `extra_context` is sent raw (unredacted),
     and Kimi may read and send other repo files. Kimi auto-loads the resolved
-    workspace's `AGENTS.md` and discovers skills in its `.agents/skills/` and
-    user-global `$KIMI_CODE_HOME/skills/` (default `~/.kimi/skills/`), reachable from
-    outside the workspace. The plugin's isolation flags don't suppress any of it. A
+    workspace's `AGENTS.md` and discovers skills from its own user/project directories and
+    from the `extra_skill_dirs` entries in its config.toml, which may point outside the
+    workspace. The plugin's isolation flags don't suppress any of it. A
     selected skill's body can reach the model even if your prompt never mentions it.
     Redaction is not a guarantee. Do not rely on it to protect live credentials; keep
     them out of the reviewed tree and your supplied inputs, or do not request a review
@@ -2829,18 +2844,20 @@ async def kimi_delegate(
     review it, then apply it yourself if you want it. Requires a git repo with at
     least one commit. Pass `workspace_root` (absolute).
 
-    NO NETWORK: `workspace-write` blocks network egress for commands Kimi RUNS in the
-    sandbox, so the task must be self-contained — it cannot `git push`/`fetch`, `gh`
-    anything, `curl`, publish, or install dependencies (those fail inside the sandbox
-    with a DNS/host-resolution error). Ask only for local code changes; do any network
-    step yourself afterward. This does NOT mean nothing leaves the machine: the Kimi
-    model call still sends your `task` to OpenAI and lets Kimi read tracked files in
-    the worktree and send their content. Kimi auto-loads the resolved workspace's
-    `AGENTS.md` and discovers skills in its `.agents/skills/` and user-global
-    `$KIMI_CODE_HOME/skills/` (default `~/.kimi/skills/`), reachable from outside the
-    workspace. The plugin's isolation flags don't suppress any of it. For delegate,
-    that workspace is the worktree; scrubbing it doesn't exclude `$KIMI_CODE_HOME/skills/`.
-    A selected skill's body can reach the model even if your `task` never mentions it.
+    NETWORK IS NOT BLOCKED: kimi has no sandbox, so a delegated task CAN reach the
+    network — it may `git push`/`fetch`, run `gh`, `curl`, publish, or install
+    dependencies, and it runs shell commands with your own user's privileges. Scope
+    tasks accordingly and review the returned diff before applying it; the diff shows
+    what changed in the worktree, not what else the run did. The Kimi model call also
+    sends your `task` to your configured provider and lets Kimi read tracked files in
+    the worktree and send their content.
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its
+    own config (including `extra_skill_dirs`, which may point outside the workspace).
+    Skill names and descriptions are exposed to the model up front, so that content
+    can be sent even if your prompt never mentions it. Kimi's built-in skills always
+    load and cannot be suppressed.
+    For delegate the resolved workspace is the worktree, so scrubbing it does not
+    exclude the `extra_skill_dirs` entries.
     Your `task` is sent raw — secret redaction is best-effort and does not cover it or
     files Kimi reads itself.
 
@@ -2919,16 +2936,15 @@ async def kimi_delegate_async(
     `kimi_job_result`/`kimi_job_consume_result`; stop with `kimi_job_cancel`. Requires a git
     repo with at least one commit; pass `workspace_root` (absolute).
 
-    NO NETWORK: like `kimi_delegate`, this runs under `workspace-write`, which blocks
-    network egress for commands Kimi RUNS in the sandbox — the task must be
-    self-contained (no push/fetch/`gh`/curl/publish/dependency install; those fail with
-    a DNS/host-resolution error in the sandbox). This does NOT mean nothing leaves the
-    machine: the Kimi model call still sends your `task` (raw) to OpenAI and lets Kimi
-    read tracked files in the worktree and send their content. Kimi auto-loads the
-    resolved workspace's `AGENTS.md` and discovers skills in its `.agents/skills/` and
-    user-global `$KIMI_CODE_HOME/skills/` (default `~/.kimi/skills/`), reachable from
+    NETWORK IS NOT BLOCKED: like `kimi_delegate`, this has no sandbox — a delegated task
+    CAN push, fetch, install dependencies, or call out, running with your own user's
+    privileges. Scope tasks accordingly and review the returned diff before applying it.
+    The Kimi model call also sends your `task` (raw) to your configured provider and lets
+    Kimi read tracked files in the worktree and send their content. Kimi auto-loads the
+    resolved workspace's `AGENTS.md` and discovers skills from its own user/project
+    directories and from the `extra_skill_dirs` entries in its config.toml, which may point
     outside the workspace. For delegate, that workspace is the worktree; scrubbing it
-    doesn't exclude `$KIMI_CODE_HOME/skills/`, so a selected skill's body can reach the
+    doesn't exclude those entries, so a selected skill's body can reach the
     model even if your `task` never mentions it. Secret redaction is best-effort and
     does not cover your `task` or files Kimi reads itself."""
     # Background jobs are bounded by the wall-clock deadline, not the sync timeout.
@@ -2971,7 +2987,10 @@ def _worker_cmd(job_dir: object) -> list[str]:
 # must not enter the dedup identity: `roots_source` in particular is per-connection, so
 # the same logical keyed call can legitimately see a different value across reconnects
 # and must still replay rather than raise idempotency_conflict (#393).
-_ARG_HASH_EXCLUDE = frozenset({"cwd", "workspace_source", "kind", "roots_source"})
+# `git_timeout` is server configuration, not caller input: two otherwise-identical calls
+# should dedup together even if the operator retimed git in between, and an idempotency
+# key must not silently stop replaying because a timeout default moved.
+_ARG_HASH_EXCLUDE = frozenset({"cwd", "workspace_source", "kind", "roots_source", "git_timeout"})
 
 # Backoff hint for idempotency_in_progress (a reservation still being published, or a
 # contended lock), and how long a SYNC keyed call waits for that publication before
@@ -3511,11 +3530,10 @@ async def kimi_consult_async(
     `kimi_job_result`/`kimi_job_consume_result`; stop with `kimi_job_cancel`.
 
     Data egress: same as `kimi_consult` — sends your `question` and `extra_context`
-    (raw, unredacted) to OpenAI via the kimi CLI, plus files Kimi reads from its
+    (raw, unredacted) to your configured provider via the kimi CLI, plus files Kimi reads from its
     resolved working directory (`workspace_root`, your MCP roots, or the server cwd).
-    Kimi auto-loads the resolved workspace's `AGENTS.md` and discovers skills in its
-    `.agents/skills/` and user-global `$KIMI_CODE_HOME/skills/` (default
-    `~/.kimi/skills/`), reachable from outside the workspace."""
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its
+    own config (including `extra_skill_dirs`, which may point outside the workspace)."""
     deadline = config.job_max_seconds()
     prep = await _prepare_consult(
         question=question,
@@ -3582,10 +3600,12 @@ async def kimi_review_changes_async(
     `workspace_root` (absolute).
 
     Data egress: same as `kimi_review_changes` — sends the secret-redacted diff plus
-    your raw (unredacted) `extra_context` to OpenAI via the kimi CLI; Kimi may also
+    your raw (unredacted) `extra_context` to your configured provider via the kimi
+    CLI; Kimi may also
     read other repo files. Kimi auto-loads the resolved workspace's `AGENTS.md` and
-    discovers skills in its `.agents/skills/` and user-global `$KIMI_CODE_HOME/skills/`
-    (default `~/.kimi/skills/`), reachable from outside the workspace. Redaction is
+    discovers skills from its own user/project directories and from the
+    `extra_skill_dirs` entries in its config.toml, which may point outside the
+    workspace. Redaction is
     best-effort, not a guarantee."""
     deadline = config.job_max_seconds()
     prep = await _prepare_review(
