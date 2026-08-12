@@ -18,7 +18,9 @@ import pytest
 from kimi_in_claude import kimi_models
 from kimi_in_claude._core.runtime import BINARY_NOT_FOUND, CommandRun
 
-# Captured verbatim from `kimi provider list --json` (key replaced with a marker).
+# The real shape of `kimi provider list --json`. The apiKey is a marker so the
+# never-leaks assertions have a genuine secret to catch; the baseUrl is deliberately a
+# placeholder, since a real one names private infrastructure.
 REAL_PAYLOAD = {
     "providers": {
         "acme": {
@@ -77,7 +79,7 @@ def test_the_provider_base_url_never_reaches_the_catalog(probe):
     # A base URL can name private infrastructure; it is not needed to pick a model.
     probe(REAL_PAYLOAD)
     blob = json.dumps(kimi_models.read_model_catalog().model_dump(mode="json"))
-    assert "acme.net" not in blob
+    assert "example-provider.invalid" not in blob
 
 
 def test_the_secret_check_can_actually_fail():
