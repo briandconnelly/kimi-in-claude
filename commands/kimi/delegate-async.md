@@ -9,7 +9,7 @@ Delegate a long-running coding task to Kimi Code in the background using the
 Task: $ARGUMENTS
 
 Pass the absolute repository path as `workspace_root`. The tool returns a `job_id`
-immediately; the run continues detached (it works in an isolated git worktree and
+immediately; the run continues detached (it works in a throwaway git worktree and
 NEVER touches the working tree).
 
 To track and collect it:

@@ -1,7 +1,7 @@
 ---
 name: collaborating-with-kimi
 description: >-
-  Use whenever Claude Code should call or compose with Kimi: an ordinary consult, code review,
+  Use whenever the host coding agent should call or compose with Kimi: an ordinary consult, code review,
   delegated implementation, async run, independent two-model attempt, or declared
   review–revise workflow. Trigger on requests such as “ask Kimi,” “get a second opinion,” “have
   Kimi review this,” “delegate this to Kimi,” “have both models attempt this,” or “run
@@ -50,10 +50,10 @@ and verification skills instead of replacing them.
 | One answer, design critique, or second opinion | `kimi_consult` | [active workflows](references/active-workflows.md) |
 | Stuck mid-debugging or choosing between viable approaches | `kimi_consult` | [active workflows](references/active-workflows.md) |
 | Review changes already represented in git | `kimi_review_changes` | [active workflows](references/active-workflows.md) |
-| Proposed implementation diff from an isolated worktree | `kimi_delegate` | [active workflows](references/active-workflows.md) |
+| Proposed implementation diff from a throwaway worktree | `kimi_delegate` | [active workflows](references/active-workflows.md) |
 | A consult, review, or delegate that can exceed the synchronous deadline — high-reasoning-effort or broad repo-grounded work, a multi-file or whole-branch review, or a substantial implementation task | matching `_async` tool | [background jobs](references/background-jobs.md) |
-| Claude and Kimi attempt independently, then synthesize | independent two-member attempt | [independent attempt](references/independent-attempt.md) |
-| Claude drafts, Kimi critiques, Claude revises | declared review–revise | [review–revise](references/review-revise.md) |
+| The host agent and Kimi attempt independently, then synthesize | independent two-member attempt | [independent attempt](references/independent-attempt.md) |
+| The host agent drafts, Kimi critiques, and the host agent revises | declared review–revise | [review–revise](references/review-revise.md) |
 | Optional parameters, idempotency, or a tool error | current tool | [options and errors](references/options-and-errors.md) |
 | MCP server unavailable | limited read-only CLI fallback | [server-down fallback](references/server-down-fallback.md) |
 | None of these, or a Kimi call would not change the decision | no call — proceed without Kimi | — |
@@ -129,12 +129,13 @@ Facts to weigh before any active call:
   busy-poll.
 - **Polling — workspace:** Pass the same absolute workspace to every lifecycle call for a job.
 - **Polling — fetch:** Fetch a job's result only after `result_available` is true.
-- **Independence — ordering:** Finalize Claude's attempt before Kimi's answer enters context:
+- **Independence — ordering:** Finalize the host agent's attempt before Kimi's answer enters context:
   start the `_async` call and draft before fetching, or draft before a sync call.
-- **Independence — draft placement:** Keep the Claude draft outside every workspace and baseline
+- **Independence — draft placement:** Keep the host agent's draft outside every workspace and baseline
   Kimi can inspect.
 - **Independence — reclassification:** If Kimi can see the draft, or Kimi's answer arrived before
-  Claude's attempt was finalized, classify the operation as critique and do not claim independence.
+  the host agent's attempt was finalized, classify the operation as critique and do not claim
+  independence.
 - **Git state:** Never stash, commit, switch branches, or create a clean worktree solely to
   manufacture independence unless the user explicitly authorizes it and preservation checks show
   their state will remain safe.

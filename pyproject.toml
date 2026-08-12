@@ -1,14 +1,14 @@
 [project]
 name = "kimi-in-claude"
 version = "0.1.0"
-description = "Call Kimi Code from Claude Code for delegation, review, and second opinions"
+description = "Call Kimi Code from Claude Code or Codex for delegation, review, and second opinions"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
     { name = "Brian Connelly" },
 ]
-keywords = ["kimi", "claude-code", "code-review", "delegation", "mcp", "plugin"]
+keywords = ["kimi", "claude-code", "codex", "code-review", "delegation", "mcp", "plugin"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

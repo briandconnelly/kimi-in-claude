@@ -1,7 +1,7 @@
 # Declared review–revise
 
-Use this pattern when Claude will create an artifact, Kimi will critique it, and Claude will revise
-it. The critique improves the work; it does not certify correctness.
+Use this pattern when the host agent will create an artifact, Kimi will critique it, and the host
+agent will revise it. The critique improves the work; it does not certify correctness.
 
 ## Default pass
 

@@ -93,6 +93,21 @@ def test_plugin_manifest_valid_and_versioned():
     assert manifest["version"] == pyproject["project"]["version"]
 
 
+def test_codex_plugin_manifest_valid_versioned_and_reuses_portable_components():
+    """Codex gets its own manifest without duplicating the skill or MCP config."""
+    codex = _load_json(".codex-plugin/plugin.json")
+    claude = _load_json(".claude-plugin/plugin.json")
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+
+    assert codex["name"] == "kimi-in-claude"
+    assert codex["version"] == pyproject["project"]["version"]
+    assert codex["skills"] == claude["skills"] == "./skills/"
+    assert codex["mcpServers"] == claude["mcpServers"] == "./.mcp.json"
+    # Claude slash-command files are not a Codex plugin component. The shared skill
+    # provides Codex-native routing to the same MCP tools instead.
+    assert "commands" not in codex
+
+
 def test_pyproject_version_matches_package():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     # __version__ resolves from installed metadata; tolerate dev/unknown in source trees.
@@ -355,6 +370,47 @@ def test_marketplace_manifest_installs_from_this_checkout():
     plugins = manifest["plugins"]
     assert [p["name"] for p in plugins] == ["kimi-in-claude"]
     assert plugins[0]["source"] == "./"
+
+
+def test_codex_marketplace_manifest_installs_from_this_checkout():
+    """The repo itself is a Codex marketplace, with the plugin at its root."""
+    manifest = _load_json(".agents/plugins/marketplace.json")
+    assert manifest["name"] == "kimi-in-claude"
+    plugins = manifest["plugins"]
+    assert [plugin["name"] for plugin in plugins] == ["kimi-in-claude"]
+    assert plugins[0]["source"] == {"source": "local", "path": "./"}
+    assert plugins[0]["policy"] == {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE",
+    }
+    assert plugins[0]["category"] == "Developer Tools"
+
+
+def test_shared_skill_uses_host_neutral_workflow_roles():
+    """The skill bundled into both plugins must not tell Codex that it is Claude."""
+    instruction_files = [
+        ROOT / "skills/collaborating-with-kimi/SKILL.md",
+        ROOT / "skills/collaborating-with-kimi/references/independent-attempt.md",
+        ROOT / "skills/collaborating-with-kimi/references/review-revise.md",
+    ]
+    for path in instruction_files:
+        assert "Claude" not in path.read_text(), path
+
+
+def test_plugin_copy_describes_worktrees_as_defense_in_depth():
+    """Install-surface copy must not imply that the worktree contains Kimi."""
+    paths = (
+        ".claude-plugin/plugin.json",
+        ".codex-plugin/plugin.json",
+        "README.md",
+        "commands/kimi/delegate.md",
+        "commands/kimi/delegate-async.md",
+        "skills/collaborating-with-kimi/SKILL.md",
+    )
+    for relpath in paths:
+        text = (ROOT / relpath).read_text()
+        assert "isolated worktree" not in text, relpath
+        assert "isolated git worktree" not in text, relpath
 
 
 def test_mcp_json_installs_from_the_pinned_git_remote():

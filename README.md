@@ -2,8 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Call **Kimi Code** from **Claude Code** — an independent second opinion, structured code review,
-and delegated coding tasks — through an MCP server that drives the `kimi` CLI.
+Call **Kimi Code** from **Claude Code or Codex** — an independent second opinion, structured code
+review, and delegated coding tasks — through an MCP server that drives the `kimi` CLI.
 
 **Contents:** [Why](#why) · [What this does and does not protect](#what-this-does-and-does-not-protect) ·
 [Quick start](#quick-start) · [Requirements](#requirements) · [Tools](#tools) ·
@@ -12,14 +12,14 @@ and delegated coding tasks — through an MCP server that drives the `kimi` CLI.
 ## Why
 
 A second model from a different vendor is a cheap, high-value check. `kimi-in-claude` lets a Claude
-Code session hand Kimi a question, a diff to review, or a task to implement, and get back a
-structured result you stay in control of.
+Code or Codex session hand Kimi a question, a diff to review, or a task to implement, and get back
+a structured result you stay in control of.
 
 | Tier | How the run is constrained | Where edits go | Use for |
 |------|---------------------------|----------------|---------|
 | `consult` | read-only agent profile (no shell, no write tools) in a throwaway worktree | nowhere — text only | questions, second opinions |
 | `review` | same as consult | nowhere — structured findings | reviewing your git changes |
-| `delegate` | full tool set in a throwaway worktree | isolated worktree → a **reviewable diff, never auto-applied** | delegating a coding task |
+| `delegate` | full tool set in a throwaway worktree | throwaway worktree → a **reviewable diff, never auto-applied** | delegating a coding task |
 
 ## What this does and does not protect
 
@@ -63,7 +63,27 @@ kimi --version
 kimi provider list --json   # at least one provider and one [models."<alias>"] entry
 ```
 
-Install the plugin. In Claude Code:
+Install the plugin for your coding agent.
+
+### Codex
+
+```sh
+codex plugin marketplace add briandconnelly/kimi-in-claude
+codex plugin add kimi-in-claude@kimi-in-claude
+```
+
+Start a new Codex session so it loads the bundled skill and tools, then ask `Check whether Kimi is
+ready`. That readiness check is free — it makes no model call.
+
+Example requests:
+
+- `Get Kimi's second opinion on this approach.`
+- `Have Kimi review my current changes.`
+- `Delegate this task to Kimi and show me the proposed diff.`
+
+You can also run `/plugins` inside the Codex CLI to browse, enable, or disable the installed plugin.
+
+### Claude Code
 
 ```
 /plugin marketplace add briandconnelly/kimi-in-claude
@@ -142,10 +162,24 @@ uv run pytest -m integration --no-cov             # live tests against the real 
 uv run ruff check . && uv run ruff format --check . && uv run ty check
 ```
 
-To install from a checkout, register it as a marketplace: `/plugin marketplace add <path to this
-checkout>`, then install as above. Note that this still runs the **released** server: `.mcp.json`
-is pinned to a tag, so it is not affected by your edits. To run the working tree, override the
-server in the consuming project's own `.mcp.json`:
+To install from a checkout, register it as a marketplace in either host:
+
+```sh
+codex plugin marketplace add <path to this checkout>
+codex plugin add kimi-in-claude@kimi-in-claude
+```
+
+In Claude Code, run `/plugin marketplace add <path to this checkout>`, then install as above. Both
+marketplaces still run the **released** server: `.mcp.json` is pinned to a tag, so it is not
+affected by your edits.
+
+To run the working tree in Codex, register a separate development server:
+
+```sh
+codex mcp add kimi-in-claude-dev -- uv run --directory <path to this checkout> kimi-in-claude-mcp
+```
+
+In Claude Code, override the server in the consuming project's own `.mcp.json`:
 
 ```json
 {

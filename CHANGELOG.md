@@ -5,6 +5,11 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Added
+
+- Codex plugin and marketplace manifests, with Codex installation instructions and a shared,
+  host-neutral Kimi collaboration skill.
+
 ## [0.1.0] - 2026-08-12
 
 First release.

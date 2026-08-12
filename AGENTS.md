@@ -4,7 +4,7 @@ Conventions for any agent (or human) working in this repository.
 
 ## What this is
 
-A Claude Code plugin that calls the Kimi Code CLI via an MCP server. The Python package
+A Claude Code and Codex plugin that calls the Kimi Code CLI via an MCP server. The Python package
 is `kimi_in_claude` under `src/`. Generic, CLI-agnostic machinery lives in
 `kimi_in_claude/_core/` and is designed for later extraction into a shared `agent-bridge`
 package.
@@ -156,9 +156,9 @@ deliberate: update the classifiers, the CI matrix, and `requires-python` togethe
 `.mcp.json` installs it with `uvx --from git+<remote>@v<version>` pinned to a release tag. The
 marketplace manifest is separate and still installs from a local checkout (`source: "./"`).
 
-A release therefore moves three things together: the version in `pyproject.toml`, the tag pinned in
+A release therefore moves the package and both plugin-manifest versions, the tag pinned in
 `.mcp.json`, and the `v<version>` tag pushed to the remote. `tests/test_packaging.py` guards the
-first two against drift. Nothing can guard the third from inside the repo — an unpushed tag makes
+file-backed values against drift. Nothing can guard the pushed tag from inside the repo — an unpushed tag makes
 `.mcp.json` unresolvable for every user but leaves the working tree green, so push the tag as part
 of the release, not after it. There is no issue-claim protocol.
 
