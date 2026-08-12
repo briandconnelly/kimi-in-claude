@@ -1,220 +1,217 @@
-# tests/test_kimi_models.py
+"""The model catalog, read from `kimi provider list --json`.
+
+Replaces the Codex-era suite, which tested a `models_cache.json` reader that has no kimi
+equivalent: `--model` takes an ALIAS from the user's own config.toml, so the aliases that
+will actually work come from the live probe.
+
+The payload shape below is the real one captured from kimi-code 0.35.0 — including the
+`providers` block, because the single most important property here is that its `apiKey`
+never reaches a result.
+"""
+
+from __future__ import annotations
+
 import json
-from pathlib import Path
 
-from kimi_in_claude import cli_contract, kimi_models
+import pytest
 
+from kimi_in_claude import kimi_models
+from kimi_in_claude._core.runtime import BINARY_NOT_FOUND, CommandRun
 
-def _write_cache(home: Path, payload: dict) -> None:
-    home.mkdir(parents=True, exist_ok=True)
-    (home / cli_contract.MODELS_CACHE_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
-
-
-def test_reads_cache_when_present(tmp_path, monkeypatch):
-    _write_cache(
-        tmp_path,
-        {
-            "fetched_at": "2026-06-23T00:04:15Z",
-            "client_version": "0.141.0",
-            "models": [
-                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
-                {"slug": "gpt-5.4", "display_name": "GPT-5.4"},
-            ],
-        },
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "cache"
-    assert [m.slug for m in cat.models] == ["gpt-5.5", "gpt-5.4"]
-    assert cat.models[0].display_name == "GPT-5.5"
-    assert cat.fetched_at == "2026-06-23T00:04:15Z"
-    assert cat.cache_client_version == "0.141.0"
-    assert cat.advisory
+# Captured verbatim from `kimi provider list --json` (key replaced with a marker).
+REAL_PAYLOAD = {
+    "providers": {
+        "acme": {
+            "baseUrl": "https://example-provider.invalid/v1",
+            "type": "openai",
+            "apiKey": "sk-SECRET-MUST-NOT-LEAK",
+        }
+    },
+    "models": {
+        "acme/model-one": {
+            "provider": "acme",
+            "model": "vendor/Model-One",
+            "maxContextSize": 430000,
+            "capabilities": ["thinking", "always_thinking", "tool_use"],
+            "displayName": "Model One (Acme)",
+            "supportEfforts": ["low", "high", "max"],
+            "defaultEffort": "max",
+        }
+    },
+}
 
 
-def test_falls_back_to_static_when_cache_absent(tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))  # empty dir, no cache file
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "static"
-    assert {m.slug for m in cat.models} == set(cli_contract.KNOWN_MODEL_SLUGS)
-    assert cat.fetched_at is None
+@pytest.fixture
+def probe(monkeypatch):
+    """Drive read_model_catalog from a canned `kimi provider list --json` result."""
+
+    def _set(payload, *, exit_code=0, binary_missing=False, timed_out=False):
+        stdout = payload if isinstance(payload, str) else json.dumps(payload)
+        run = CommandRun(
+            stdout,
+            BINARY_NOT_FOUND if binary_missing else "",
+            127 if binary_missing else exit_code,
+            5,
+            timed_out,
+        )
+        monkeypatch.setattr("kimi_in_claude._core.runtime.run_sync_capture", lambda *a, **k: run)
+
+    return _set
 
 
-def test_default_home_used_when_env_unset(tmp_path, monkeypatch):
-    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    _write_cache(tmp_path / ".kimi", {"models": [{"slug": "gpt-5.5"}]})
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "cache"
-    assert [m.slug for m in cat.models] == ["gpt-5.5"]
+# --------------------------------------------------------------------------- #
+# The secret that lives in this payload
+# --------------------------------------------------------------------------- #
+def test_the_provider_api_key_never_reaches_the_catalog(probe):
+    """`kimi provider list --json` returns apiKey in plaintext. The parser is allowlist-
+    shaped (it reads named fields off `models` only) precisely so a secret cannot ride
+    along, and this asserts the whole serialized result, not just the fields we expect."""
+    probe(REAL_PAYLOAD)
+    catalog = kimi_models.read_model_catalog()
+    blob = json.dumps(catalog.model_dump(mode="json"))
+    assert "sk-SECRET-MUST-NOT-LEAK" not in blob
+    assert "apiKey" not in blob
 
 
-def test_unexpandable_kimi_home_falls_back_to_static(monkeypatch):
-    # KIMI_CODE_HOME=~missing_user makes Path.expanduser() raise RuntimeError; the catalog
-    # must fall back instead of letting that escape the defensive path.
-    monkeypatch.setenv("KIMI_CODE_HOME", "~definitely_not_a_real_user_zzzz")
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "static"
-    assert {m.slug for m in cat.models} == set(cli_contract.KNOWN_MODEL_SLUGS)
+def test_the_provider_base_url_never_reaches_the_catalog(probe):
+    # A base URL can name private infrastructure; it is not needed to pick a model.
+    probe(REAL_PAYLOAD)
+    blob = json.dumps(kimi_models.read_model_catalog().model_dump(mode="json"))
+    assert "acme.net" not in blob
 
 
-def test_malformed_shape_falls_back_to_static(tmp_path, monkeypatch):
-    _write_cache(tmp_path, {"models": "not-a-list"})
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    assert kimi_models.read_model_catalog().source == "static"
+def test_the_secret_check_can_actually_fail():
+    """Negative control for the two tests above: if the marker were absent from the source
+    payload, they would pass no matter what the parser did."""
+    assert "sk-SECRET-MUST-NOT-LEAK" in json.dumps(REAL_PAYLOAD)
 
 
-def test_junk_entries_are_filtered(tmp_path, monkeypatch):
-    _write_cache(
-        tmp_path,
-        {"models": [{"slug": "gpt-5.5"}, {"slug": "bad slug!"}, {"no_slug": 1}, "nope"]},
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "cache"
-    assert [m.slug for m in cat.models] == ["gpt-5.5"]
+# --------------------------------------------------------------------------- #
+# Parsing
+# --------------------------------------------------------------------------- #
+def test_reads_aliases_from_the_live_probe(probe):
+    probe(REAL_PAYLOAD)
+    catalog = kimi_models.read_model_catalog()
+    assert catalog.source == "cache"
+    assert [m.slug for m in catalog.models] == ["acme/model-one"]
 
 
-def test_oversize_cache_falls_back(tmp_path, monkeypatch):
-    # Exceed the byte cap directly — the size check rejects before parsing, so the
-    # content need not be valid JSON and we avoid building a multi-MB document.
-    oversize = b"x" * (cli_contract.MODELS_CACHE_MAX_BYTES + 1)
-    (tmp_path / cli_contract.MODELS_CACHE_FILENAME).write_bytes(oversize)
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    assert kimi_models.read_model_catalog().source == "static"
+def test_reads_effort_metadata(probe):
+    probe(REAL_PAYLOAD)
+    model = kimi_models.read_model_catalog().models[0]
+    assert model.supported_reasoning_efforts == ["low", "high", "max"]
+    assert model.default_reasoning_effort == "max"
+    assert model.display_name == "Model One (Acme)"
 
 
-def test_source_none_when_no_cache_and_no_static(tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    monkeypatch.setattr(cli_contract, "KNOWN_MODEL_SLUGS", ())
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "none"
-    assert cat.unavailable_reason
-    assert cat.models == []
+def test_an_alias_without_effort_metadata_reports_none(probe):
+    probe({"models": {"a/b": {"provider": "x"}}})
+    model = kimi_models.read_model_catalog().models[0]
+    assert model.supported_reasoning_efforts is None
+    assert model.default_reasoning_effort is None
 
 
-# --- Reasoning-effort discovery (#309) ---------------------------------------------
-def test_reasoning_effort_fields_parsed_from_cache(tmp_path, monkeypatch):
-    # The real 0.144 cache shape: supported_reasoning_levels is a list of OBJECTS
-    # {effort, description, ...}; only the effort tokens are surfaced (advisory).
-    _write_cache(
-        tmp_path,
-        {
-            "models": [
-                {
-                    "slug": "gpt-5.6-sol",
-                    "default_reasoning_level": "medium",
-                    "supported_reasoning_levels": [
-                        {"effort": "low", "description": "Fast responses"},
-                        {"effort": "medium", "description": "Balanced"},
-                        {"effort": "max", "description": "Maximum depth"},
-                        {"effort": "ultra", "description": "With delegation"},
-                    ],
-                },
-            ]
-        },
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    cat = kimi_models.read_model_catalog()
-    m = cat.models[0]
-    assert m.default_reasoning_effort == "medium"
-    assert m.supported_reasoning_efforts == ["low", "medium", "max", "ultra"]
+def test_junk_effort_tokens_are_dropped(probe):
+    probe({"models": {"a/b": {"supportEfforts": ["low", 42, None, "high", "low"]}}})
+    model = kimi_models.read_model_catalog().models[0]
+    assert model.supported_reasoning_efforts == ["low", "high"]
 
 
-def test_reasoning_effort_fields_none_when_absent(tmp_path, monkeypatch):
-    _write_cache(tmp_path, {"models": [{"slug": "gpt-5.5"}]})
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    m = kimi_models.read_model_catalog().models[0]
-    assert m.default_reasoning_effort is None
-    assert m.supported_reasoning_efforts is None
+def test_an_all_junk_effort_list_is_none_not_empty(probe):
+    """None means "unknown" and must not be confused with [] ("nothing allowed") — the
+    pre-spend guard refuses a run only when the supported set is genuinely known."""
+    probe({"models": {"a/b": {"supportEfforts": [1, 2, 3]}}})
+    assert kimi_models.read_model_catalog().models[0].supported_reasoning_efforts is None
 
 
-def test_reasoning_effort_junk_entries_dropped_and_deduped(tmp_path, monkeypatch):
-    _write_cache(
-        tmp_path,
-        {
-            "models": [
-                {
-                    "slug": "gpt-5.5",
-                    "default_reasoning_level": "medium",
-                    "supported_reasoning_levels": [
-                        {"effort": "low"},
-                        {"effort": "low"},  # duplicate: kept once, order preserved
-                        {"effort": ""},  # empty: dropped
-                        {"effort": "two words"},  # fails the token pattern: dropped
-                        {"effort": 42},  # non-string: dropped
-                        {"description": "no effort key"},  # missing effort: dropped
-                        "nope",  # non-dict entry: dropped
-                        {"effort": "high"},
-                    ],
-                },
-            ]
-        },
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    m = kimi_models.read_model_catalog().models[0]
-    assert m.supported_reasoning_efforts == ["low", "high"]
+def test_an_explicitly_empty_effort_list_stays_empty(probe):
+    probe({"models": {"a/b": {"supportEfforts": []}}})
+    assert kimi_models.read_model_catalog().models[0].supported_reasoning_efforts == []
 
 
-def test_reasoning_effort_all_junk_is_none_not_empty(tmp_path, monkeypatch):
-    # A non-empty advertised list that yields nothing usable is unusable data (None),
-    # distinct from an explicitly empty list ([]).
-    _write_cache(
-        tmp_path,
-        {
-            "models": [
-                {"slug": "a-model", "supported_reasoning_levels": [{"effort": "bad token!"}]},
-                {"slug": "b-model", "supported_reasoning_levels": []},
-                {"slug": "c-model", "supported_reasoning_levels": "not-a-list"},
-            ]
-        },
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    models = {m.slug: m for m in kimi_models.read_model_catalog().models}
-    assert models["a-model"].supported_reasoning_efforts is None
-    assert models["b-model"].supported_reasoning_efforts == []
-    assert models["c-model"].supported_reasoning_efforts is None
+def test_the_effort_list_is_capped(probe):
+    probe({"models": {"a/b": {"supportEfforts": ["low"] * 500}}})
+    efforts = kimi_models.read_model_catalog().models[0].supported_reasoning_efforts
+    assert efforts == ["low"]
 
 
-def test_reasoning_effort_list_is_capped(tmp_path, monkeypatch):
-    levels = [{"effort": f"e{i}"} for i in range(cli_contract.SUPPORTED_EFFORTS_MAX_ENTRIES + 10)]
-    _write_cache(
-        tmp_path,
-        {"models": [{"slug": "gpt-5.5", "supported_reasoning_levels": levels}]},
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    m = kimi_models.read_model_catalog().models[0]
-    assert len(m.supported_reasoning_efforts) == cli_contract.SUPPORTED_EFFORTS_MAX_ENTRIES
+def test_aliases_failing_the_slug_pattern_are_dropped(probe):
+    probe({"models": {"good/alias": {}, "bad alias with spaces": {}, "": {}}})
+    assert [m.slug for m in kimi_models.read_model_catalog().models] == ["good/alias"]
 
 
-def test_default_reasoning_effort_validated_independently(tmp_path, monkeypatch):
-    # A junk default is dropped without touching the supported list, and a valid
-    # default survives even when absent from (or lacking) an advertised list.
-    _write_cache(
-        tmp_path,
-        {
-            "models": [
-                {
-                    "slug": "a-model",
-                    "default_reasoning_level": "bad default!",
-                    "supported_reasoning_levels": [{"effort": "low"}],
-                },
-                {"slug": "b-model", "default_reasoning_level": "xhigh"},
-            ]
-        },
-    )
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    models = {m.slug: m for m in kimi_models.read_model_catalog().models}
-    assert models["a-model"].default_reasoning_effort is None
-    assert models["a-model"].supported_reasoning_efforts == ["low"]
-    assert models["b-model"].default_reasoning_effort == "xhigh"
-    assert models["b-model"].supported_reasoning_efforts is None
+def test_a_non_dict_entry_does_not_crash_the_parse(probe):
+    probe({"models": {"a/b": "not-a-dict"}})
+    catalog = kimi_models.read_model_catalog()
+    assert [m.slug for m in catalog.models] == ["a/b"]
 
 
-def test_static_fallback_has_no_reasoning_effort_data(tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path))
-    cat = kimi_models.read_model_catalog()
-    assert cat.source == "static"
-    for m in cat.models:
-        assert m.default_reasoning_effort is None
-        assert m.supported_reasoning_efforts is None
+def test_an_overlong_display_name_is_dropped(probe):
+    probe({"models": {"a/b": {"displayName": "x" * 500}}})
+    assert kimi_models.read_model_catalog().models[0].display_name is None
+
+
+# --------------------------------------------------------------------------- #
+# Unavailable paths
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"binary_missing": True},
+        {"exit_code": 1},
+        {"timed_out": True},
+    ],
+)
+def test_a_failed_probe_reports_none_rather_than_guessing(probe, kwargs):
+    probe({}, **kwargs)
+    catalog = kimi_models.read_model_catalog()
+    assert catalog.source == "none"
+    assert catalog.unavailable_reason
+
+
+def test_unparseable_output_reports_none(probe):
+    probe("this is not json")
+    assert kimi_models.read_model_catalog().source == "none"
+
+
+def test_a_missing_models_map_reports_none(probe):
+    probe({"providers": {"x": {}}})
+    assert kimi_models.read_model_catalog().source == "none"
+
+
+def test_an_oversized_payload_is_refused(probe):
+    # Bounded before parse: the probe output is external input.
+    probe(json.dumps({"models": {"a/b": {"displayName": "x"}}}) + " " * 2_000_000)
+    assert kimi_models.read_model_catalog().source == "none"
+
+
+# --------------------------------------------------------------------------- #
+# supported_efforts_for — the pre-spend guard's source of truth
+# --------------------------------------------------------------------------- #
+def test_supported_efforts_for_a_known_alias(probe):
+    probe(REAL_PAYLOAD)
+    assert kimi_models.supported_efforts_for("acme/model-one") == ["low", "high", "max"]
+
+
+def test_supported_efforts_for_an_unknown_alias_is_none(probe):
+    """None means "cannot tell", and callers must NOT reject on it. kimi silently ignores
+    an unrecognized effort, so refusing on a guess would block a valid run."""
+    probe(REAL_PAYLOAD)
+    assert kimi_models.supported_efforts_for("some/other") is None
+
+
+def test_supported_efforts_for_no_model_is_none(probe):
+    probe(REAL_PAYLOAD)
+    assert kimi_models.supported_efforts_for(None) is None
+
+
+def test_supported_efforts_accepts_a_prefetched_catalog(probe):
+    """Lets the guard avoid a second subprocess per call."""
+    probe(REAL_PAYLOAD)
+    catalog = kimi_models.read_model_catalog()
+    probe({}, exit_code=1)  # a further probe would now fail
+    assert kimi_models.supported_efforts_for("acme/model-one", catalog) == [
+        "low",
+        "high",
+        "max",
+    ]

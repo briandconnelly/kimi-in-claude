@@ -2658,13 +2658,15 @@ async def kimi_consult(
     Kimi provider via the
     kimi CLI. Kimi always runs with a resolved working directory (`workspace_root`,
     your MCP roots, or the server's cwd as a fallback), so it may read files there and
-    send their content too. Kimi auto-loads the resolved workspace's AGENTS.md and discovers
-    skills from its own config (including `extra_skill_dirs`, which may point outside the
-    workspace). Skill names and descriptions are exposed to the model up front, so that
-    content can be sent even if your prompt never mentions it. Kimi's built-in skills always
-    load and cannot be suppressed. Your inputs are sent raw — secret
-    redaction is best-effort and does not cover them (it covers gathered diffs and
-    Kimi's returned output, not what you type or what Kimi reads from files).
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its own
+    config (including `extra_skill_dirs`, which may point outside the workspace). Skill
+    names and descriptions are exposed to the model up front, so that content can be sent
+    even if your prompt never mentions it. The isolation setting does not suppress any of
+    it: kimi's built-in skills always load, and AGENTS.md is read regardless.
+
+    Your inputs are sent raw and unredacted. Secret redaction is best-effort and covers the
+    gathered diff and Kimi's returned output — not what you type, and not the files Kimi
+    reads for itself.
 
     Progress & recovery: blocks up to the resolved deadline (`timeout_seconds`, clamped
     10-600s; when omitted, the server-configured value, built-in default 300s). If that deadline
@@ -2759,14 +2761,15 @@ async def kimi_review_changes(
     Data egress: this sends the gathered diff to your configured provider via the
     kimi CLI. The diff is
     secret-redacted (best-effort), but your `extra_context` is sent raw (unredacted),
-    and Kimi may read and send other repo files. Kimi auto-loads the resolved
-    workspace's `AGENTS.md` and discovers skills from its own user/project directories and
-    from the `extra_skill_dirs` entries in its config.toml, which may point outside the
-    workspace. The plugin's isolation flags don't suppress any of it. A
-    selected skill's body can reach the model even if your prompt never mentions it.
-    Redaction is not a guarantee. Do not rely on it to protect live credentials; keep
-    them out of the reviewed tree and your supplied inputs, or do not request a review
-    of that tree.
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its own
+    config (including `extra_skill_dirs`, which may point outside the workspace). Skill
+    names and descriptions are exposed to the model up front, so that content can be sent
+    even if your prompt never mentions it. The isolation setting does not suppress any of
+    it: kimi's built-in skills always load, and AGENTS.md is read regardless.
+
+    Your inputs are sent raw and unredacted. Secret redaction is best-effort and covers the
+    gathered diff and Kimi's returned output — not what you type, and not the files Kimi
+    reads for itself.
 
     Progress & recovery: blocks up to the resolved deadline (`timeout_seconds`, clamped
     10-600s; when omitted, the server-configured value, built-in default 300s). If that deadline
@@ -2851,15 +2854,15 @@ async def kimi_delegate(
     what changed in the worktree, not what else the run did. The Kimi model call also
     sends your `task` to your configured provider and lets Kimi read tracked files in
     the worktree and send their content.
-    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its
-    own config (including `extra_skill_dirs`, which may point outside the workspace).
-    Skill names and descriptions are exposed to the model up front, so that content
-    can be sent even if your prompt never mentions it. Kimi's built-in skills always
-    load and cannot be suppressed.
-    For delegate the resolved workspace is the worktree, so scrubbing it does not
-    exclude the `extra_skill_dirs` entries.
-    Your `task` is sent raw — secret redaction is best-effort and does not cover it or
-    files Kimi reads itself.
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its own
+    config (including `extra_skill_dirs`, which may point outside the workspace). Skill
+    names and descriptions are exposed to the model up front, so that content can be sent
+    even if your prompt never mentions it. The isolation setting does not suppress any of
+    it: kimi's built-in skills always load, and AGENTS.md is read regardless.
+
+    Your inputs are sent raw and unredacted. Secret redaction is best-effort and covers the
+    gathered diff and Kimi's returned output — not what you type, and not the files Kimi
+    reads for itself.
 
     Progress & recovery: blocks up to the resolved deadline (`timeout_seconds`, clamped
     10-600s; when omitted, the server-configured value, built-in default 300s). If that deadline
@@ -2940,13 +2943,13 @@ async def kimi_delegate_async(
     CAN push, fetch, install dependencies, or call out, running with your own user's
     privileges. Scope tasks accordingly and review the returned diff before applying it.
     The Kimi model call also sends your `task` (raw) to your configured provider and lets
-    Kimi read tracked files in the worktree and send their content. Kimi auto-loads the
-    resolved workspace's `AGENTS.md` and discovers skills from its own user/project
-    directories and from the `extra_skill_dirs` entries in its config.toml, which may point
-    outside the workspace. For delegate, that workspace is the worktree; scrubbing it
-    doesn't exclude those entries, so a selected skill's body can reach the
-    model even if your `task` never mentions it. Secret redaction is best-effort and
-    does not cover your `task` or files Kimi reads itself."""
+    Kimi read tracked files in the worktree and send their content.
+
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its own
+    config (including `extra_skill_dirs`, which may point outside the workspace).
+
+    Secret redaction is best-effort and does not cover your `task` or the files Kimi
+    reads for itself."""
     # Background jobs are bounded by the wall-clock deadline, not the sync timeout.
     deadline = config.job_max_seconds()
     prep = await _prepare_delegate(
@@ -3532,8 +3535,13 @@ async def kimi_consult_async(
     Data egress: same as `kimi_consult` — sends your `question` and `extra_context`
     (raw, unredacted) to your configured provider via the kimi CLI, plus files Kimi reads from its
     resolved working directory (`workspace_root`, your MCP roots, or the server cwd).
-    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its
-    own config (including `extra_skill_dirs`, which may point outside the workspace)."""
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its own
+    config (including `extra_skill_dirs`, which may point outside the workspace).
+
+    Your inputs are sent raw and unredacted. Secret redaction is best-effort and covers the
+    gathered diff and Kimi's returned output — not what you type, and not the files Kimi
+    reads for itself.
+    """
     deadline = config.job_max_seconds()
     prep = await _prepare_consult(
         question=question,
@@ -3602,11 +3610,13 @@ async def kimi_review_changes_async(
     Data egress: same as `kimi_review_changes` — sends the secret-redacted diff plus
     your raw (unredacted) `extra_context` to your configured provider via the kimi
     CLI; Kimi may also
-    read other repo files. Kimi auto-loads the resolved workspace's `AGENTS.md` and
-    discovers skills from its own user/project directories and from the
-    `extra_skill_dirs` entries in its config.toml, which may point outside the
-    workspace. Redaction is
-    best-effort, not a guarantee."""
+    Kimi auto-loads the resolved workspace's AGENTS.md and discovers skills from its own
+    config (including `extra_skill_dirs`, which may point outside the workspace).
+
+    Your inputs are sent raw and unredacted. Secret redaction is best-effort and covers the
+    gathered diff and Kimi's returned output — not what you type, and not the files Kimi
+    reads for itself.
+    """
     deadline = config.job_max_seconds()
     prep = await _prepare_review(
         workspace_root=workspace_root,

@@ -227,140 +227,28 @@ class ExtraArgs:
         return self.error is None
 
 
-def _extra_args_flag_kind(flag: str) -> str | None:
-    if flag in _EXTRA_CONFIG_FLAGS:
-        return "config"
-    if flag in _EXTRA_PROFILE_FLAGS:
-        return "profile"
-    if flag in _EXTRA_FEATURE_FLAGS:
-        return "feature"
-    return None
-
-
 def _safe_token(token: str) -> str:
     """A bounded, secret-redacted echo of an offending token for an error message."""
     return (redaction.redact_text(token) or "")[:60]
 
 
-def _normalize_config_key(key: str) -> str:
-    """Conservatively canonicalize a dotted `-c` config KEY for denylist matching: trim each
-    dotted segment, strip surrounding TOML quotes, and lowercase. This is deliberate
-    OVER-matching, not a mirror of kimi — kimi's own `-c` parser (config_override.rs,
-    verified at rust-v0.144.3) trims the whole key, then does a naive '.'-split with each
-    segment used literally: case-sensitive, no quote handling. So a spaced/cased/quoted
-    variant (`features . Remote_Plugin`, `features."remote_plugin"`, `"features".remote_plugin`)
-    is a junk key kimi's config never reads, not an alias of the real one; refusing such
-    lookalikes anyway costs nothing and keeps the denylist unprobeable (#287, #312). shlex
-    strips unescaped quotes before this, but an escaped/preserved quote can survive to here."""
-    segments = []
-    for seg in key.split("."):
-        segments.append(seg.strip().strip("\"'").strip().lower())
-    return ".".join(segments)
-
-
 def _parse_extra_args(raw: str) -> ExtraArgs:
-    """Tokenize + allowlist-validate a non-blank KIMI_IN_CLAUDE_EXTRA_ARGS value."""
+    """Validate a non-blank KIMI_IN_CLAUDE_EXTRA_ARGS value — which always means rejecting it.
+
+    kimi exposes no option this server can safely pass through (see NO_PASSTHROUGH_REASON),
+    so there is nothing to allowlist and this reduces to "any token is refused". It stays a
+    parser rather than a bare rejection so the offending token can be named back to the
+    operator, and so re-opening a passthrough later is a change here rather than a rewrite.
+    """
     try:
         toks = shlex.split(raw)
     except ValueError:
         return ExtraArgs(configured=True, error="could not tokenize (unbalanced quotes?)")
-    tokens: list[str] = []
-    descriptors: list[str] = []
-    count = 0
-    i = 0
-    while i < len(toks):
-        tok = toks[i]
-        # Long `--flag=value` attached form → one token; split on the FIRST `=`.
-        attached = tok.startswith("--") and "=" in tok
-        if attached:
-            flag, value = tok.split("=", 1)
-        else:
-            flag = tok
-        kind = _extra_args_flag_kind(flag)
-        if kind is None:
-            return ExtraArgs(
-                configured=True,
-                error=f"unsupported argument: {_safe_token(tok)} — {NO_PASSTHROUGH_REASON}",
-            )
-        if not attached:
-            if i + 1 >= len(toks):
-                return ExtraArgs(configured=True, error=f"{flag} requires a value")
-            value = toks[i + 1]
-            i += 1
-        # A value that itself looks like a flag is a smuggled option, not a value.
-        if value.startswith("-"):
-            return ExtraArgs(configured=True, error=f"{flag} value looks like a flag")
-        if kind == "config":
-            if "=" not in value:
-                return ExtraArgs(configured=True, error=f"{flag} expects KEY=VALUE")
-            key = value.split("=", 1)[0]
-            if not key.strip():
-                return ExtraArgs(configured=True, error=f"{flag} has an empty config key")
-            # One canonicalization for every denylist check (#312): normalize the whole key
-            # once and derive the root from it, so a quoted root ('"sandbox_mode"=…') is
-            # refused with the same conservative over-matching as the exact-key denials
-            # below (see _normalize_config_key — in kimi those spellings are junk keys,
-            # so this closes a silently-accepted no-op, not a sandbox bypass).
-            normalized = _normalize_config_key(key)
-            root = normalized.split(".", 1)[0]
-            if any(root == d or root.startswith(f"{d}_") for d in _DENIED_CONFIG_KEY_ROOTS):
-                return ExtraArgs(
-                    configured=True,
-                    error=(
-                        f"config key '{key.strip()}' is refused: it could weaken the sandbox / "
-                        "network / approval / host-env-isolation guarantees this server advertises"
-                    ),
-                )
-            if normalized in _DENIED_CONFIG_KEYS:
-                return ExtraArgs(
-                    configured=True,
-                    error=(
-                        f"config key '{key.strip()}' is refused: the plugin disables the "
-                        "remote_plugin connectors as a security guarantee (#287); an operator "
-                        "override cannot re-enable them"
-                    ),
-                )
-            reserved = _RESERVED_META_CONFIG_KEYS.get(normalized)
-            if reserved is not None:
-                meta_field, env_var, param, issue = reserved
-                return ExtraArgs(
-                    configured=True,
-                    error=(
-                        f"config key '{key.strip()}' is reserved — it would contradict the "
-                        f"provenance reported in result envelopes ({meta_field}); set "
-                        f"{env_var} or the per-call {param} parameter instead ({issue})"
-                    ),
-                )
-            tokens += [flag, value]
-            # Record the flag too (not just the key), so a drift where kimi rejects the
-            # `-c`/`--config` flag token itself is still attributed to the passthrough.
-            # The key is a config-path name (not a secret); the `-c` VALUE is never added.
-            descriptors += [flag, key]
-        else:  # profile / feature — the value is a non-secret NAME
-            if not value:
-                return ExtraArgs(configured=True, error=f"{flag} requires a non-empty value")
-            if kind == "feature" and value.strip().lower() in _PLUGIN_OWNED_FEATURES:
-                return ExtraArgs(
-                    configured=True,
-                    error=(
-                        f"feature '{value.strip()}' is managed by the plugin and cannot be set "
-                        f"via {EXTRA_ARGS_ENV} (enable or disable): it disables the remote_plugin "
-                        "connectors as a security guarantee (#287)"
-                    ),
-                )
-            tokens += [flag, value]
-            descriptors += [flag, value]
-        count += 1
-        i += 1
-    # De-dupe descriptors while preserving order (a stable, small match/echo set).
-    seen: dict[str, None] = {}
-    for d in descriptors:
-        seen.setdefault(d, None)
+    if not toks:
+        return ExtraArgs(configured=True, error="no options found")
     return ExtraArgs(
-        tokens=tuple(tokens),
-        descriptors=tuple(seen),
-        option_count=count,
         configured=True,
+        error=f"unsupported argument: {_safe_token(toks[0])} — {NO_PASSTHROUGH_REASON}",
     )
 
 

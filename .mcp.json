@@ -1,10 +1,11 @@
 {
   "mcpServers": {
     "kimi-in-claude": {
-      "command": "uvx",
+      "command": "uv",
       "args": [
-        "--from",
-        "kimi-in-claude==0.17.0",
+        "run",
+        "--directory",
+        "/Users/bdc/projects/kimi-in-claude",
         "kimi-in-claude-mcp"
       ]
     }

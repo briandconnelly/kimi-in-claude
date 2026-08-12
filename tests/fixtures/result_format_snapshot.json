@@ -188,8 +188,7 @@
             "isolation": {
               "enum": [
                 "inherit",
-                "ignore-config",
-                "ignore-rules"
+                "ignore-skills"
               ],
               "title": "Isolation",
               "type": "string"
@@ -982,8 +981,7 @@
             "isolation": {
               "enum": [
                 "inherit",
-                "ignore-config",
-                "ignore-rules"
+                "ignore-skills"
               ],
               "title": "Isolation",
               "type": "string"
@@ -1760,6 +1758,8 @@
                 "internal_error",
                 "cli_contract_changed",
                 "invalid_reasoning_effort",
+                "invalid_model",
+                "empty_response",
                 "extra_args_rejected",
                 "transfer_unsupported",
                 "transfer_failed",
@@ -2001,8 +2001,7 @@
             "isolation": {
               "enum": [
                 "inherit",
-                "ignore-config",
-                "ignore-rules"
+                "ignore-skills"
               ],
               "title": "Isolation",
               "type": "string"
@@ -2863,8 +2862,7 @@
             "isolation": {
               "enum": [
                 "inherit",
-                "ignore-config",
-                "ignore-rules"
+                "ignore-skills"
               ],
               "title": "Isolation",
               "type": "string"

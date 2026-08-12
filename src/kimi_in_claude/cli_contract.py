@@ -48,7 +48,10 @@ KIMI_BIN = "kimi"
 # ("prompt mode"). EXEC_SUBCOMMAND stays as an empty tuple so callers can keep building
 # `[KIMI_BIN, *EXEC_SUBCOMMAND, ...]` uniformly.
 EXEC_SUBCOMMAND: tuple[str, ...] = ()
-PROMPT_FLAG = "-p"
+# Long form, for the same reason as MODEL_FLAG: preflight parses only long flags out of
+# `kimi --help`, so a short `-p` would be permanently reported missing by the
+# missing_expected_flags health check. kimi advertises `-p, --prompt <prompt>`.
+PROMPT_FLAG = "--prompt"
 
 # Machine-readable event stream. `text` is the default and prints only the assistant text;
 # `stream-json` is the only structured option. Guarantee-bearing: without it there is no
@@ -232,9 +235,24 @@ SKILLS_DISCOVERY_FACT = (
 SKILLS_DISCOVERY_FACT_FULL = (
     SKILLS_DISCOVERY_FACT
     + " Skill names and descriptions are exposed to the model up front, so that content can "
-    "be sent even if your prompt never mentions it. Kimi's built-in skills always load and "
-    "cannot be suppressed."
+    "be sent even if your prompt never mentions it. The isolation setting does not suppress "
+    "any of it: kimi's built-in skills always load, and AGENTS.md is read regardless."
 )
+# The other half of the egress disclosure, kept beside the skills fact so a docstring
+# carries both or neither. Covers three separate facts a caller needs: inputs go out
+# unredacted, Kimi reads files itself, and redaction is best-effort rather than a promise.
+REDACTION_LIMIT_FACT = (
+    "Your inputs are sent raw and unredacted. Secret redaction is best-effort and covers "
+    "the gathered diff and Kimi's returned output — not what you type, and not the files "
+    "Kimi reads for itself."
+)
+
+# RULE: the implicit-context disclosure above is agent- and user-facing, so it must also
+# appear in the human docs, not only in tool descriptions. Every one of these sites carries
+# it, and tests/test_docs_disclosure.py enforces the list in BOTH directions — dropping a
+# site fails, and naming a new one here fails until it is enforced there too:
+# README.md, COMPATIBILITY.md, SECURITY.md, and the collaborating-with-kimi skill.
+
 SKILLS_ISOLATION_NOTE = (
     "isolation=ignore-skills replaces the auto-discovered user/project skill directories "
     "via --skills-dir, but kimi's BUILT-IN skills still load — verified on 0.35.0. It is a "

@@ -5,20 +5,52 @@ from __future__ import annotations
 from kimi_in_claude import cli_contract, preflight
 from kimi_in_claude._core.runtime import CommandRun
 
-_HELP = """
-Run Kimi non-interactively
-  --json
-  --sandbox <SANDBOX_MODE>
-  --cd <DIR>
-  --output-last-message <FILE>
-  --ephemeral
-  --ignore-user-config
-  --ignore-rules
-  --add-dir <DIR>
-  --skip-git-repo-check
-  --output-schema <FILE>
-  --disable <FEATURE>
-  -m, --model <MODEL>
+_HELP = """Usage: kimi [options] [command]
+
+The Starting Point for Next-Gen Agents
+
+Options:
+  -V, --version                 output the version number
+  -S, --session [id]            Resume a session. With ID: resume that session. Without ID:
+                                interactively pick.
+  -c, --continue                Continue the previous session for the working directory. (default:
+                                false)
+  -y, --yolo                    Auto-approve regular tool calls; the agent may still ask questions.
+                                (default: false)
+  --auto                        Start in auto permission mode: fully autonomous, the agent will not
+                                ask questions. (default: false)
+  -m, --model <model>           LLM model alias to use for this invocation. Defaults to
+                                default_model in config.toml.
+  -p, --prompt <prompt>         Run one prompt non-interactively and print the response.
+  --output-format <format>      Output format for prompt mode. Defaults to text. (choices: "text",
+                                "stream-json")
+  --skills-dir <dir>            Load skills from this directory instead of auto-discovered user and
+                                project directories. Can be repeated. (default: [])
+  --agent <name>                Agent profile to start the new session with. Custom profiles are
+                                discovered from agent directories or loaded via --agent-file. Cannot
+                                be combined with --session/--continue.
+  --agent-file <path>           Load an agent definition from a Markdown file and select it for the
+                                new session. Cannot be combined with --session/--continue. (default:
+                                [])
+  --add-dir <dir>               Add an additional workspace directory for this session. Can be
+                                repeated. (default: [])
+  --plan                        Start in plan mode. (default: false)
+  -h, --help                    Show help.
+
+Commands:
+  export [options] [sessionId]  Export a session as a ZIP archive.
+  provider                      Manage LLM providers non-interactively.
+  acp [options]                 Run kimi-code as an Agent Client Protocol (ACP) server over stdio.
+  web [options]                 Run the local Kimi server and open the web UI.
+  server                        Deprecated — use `kimi web` instead.
+  login                         Authenticate with Kimi Code CLI via the device-code flow.
+  doctor                        Validate Kimi Code configuration files.
+  vis [options] [sessionId]     Launch the session visualizer in your browser.
+  migrate                       Migrate data from a legacy kimi-cli installation into kimi-code.
+  upgrade|update                Upgrade Kimi Code to the latest version.
+
+Documentation:        https://moonshotai.github.io/kimi-code/
+
 """
 
 
@@ -36,7 +68,9 @@ def test_flag_support_parses(monkeypatch):
     fs = preflight.flag_support(force=True)
     assert fs.help_parsed
     assert "--model" in fs.supported
-    assert "--sandbox" in fs.supported
+    # kimi has no --sandbox; these are the flags this server actually depends on.
+    assert "--agent-file" in fs.supported
+    assert "--output-format" in fs.supported
 
 
 def test_is_supported_present(monkeypatch):
@@ -63,7 +97,7 @@ def test_missing_expected_flags_detects_gap(monkeypatch):
     _patch_help(monkeypatch, "Run Kimi\n  --json\n  --cd <DIR>\n")
     fs = preflight.flag_support(force=True)
     missing = preflight.missing_expected_flags(fs)
-    assert "--sandbox" in missing
+    assert "--agent-file" in missing
     assert all(f in cli_contract.ALWAYS_SEND_FLAGS for f in missing)
 
 

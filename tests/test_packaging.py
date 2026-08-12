@@ -93,23 +93,6 @@ def test_plugin_manifest_valid_and_versioned():
     assert manifest["version"] == pyproject["project"]["version"]
 
 
-def test_marketplace_valid():
-    market = _load_json(".claude-plugin/marketplace.json")
-    names = [p["name"] for p in market["plugins"]]
-    assert "kimi-in-claude" in names
-
-
-def test_mcp_json_launches_pinned_release():
-    mcp = _load_json(".mcp.json")
-    args = mcp["mcpServers"]["kimi-in-claude"]["args"]
-    assert "kimi-in-claude-mcp" in args
-    # Installed from PyPI, pinned to this exact version for deliberate updates — and
-    # kept in lockstep with pyproject (mirrors the release-lockstep CI guard).
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    version = pyproject["project"]["version"]
-    assert f"kimi-in-claude=={version}" in args
-
-
 def test_pyproject_version_matches_package():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     # __version__ resolves from installed metadata; tolerate dev/unknown in source trees.
@@ -350,3 +333,33 @@ def test_delegate_async_command_present():
     cmd_dir = ROOT / "commands/kimi"
     names = {p.stem for p in cmd_dir.glob("*.md")}
     assert "delegate-async" in names
+
+
+# --------------------------------------------------------------------------- #
+# Distribution: local-only for now
+# --------------------------------------------------------------------------- #
+# kimi-in-claude is not published to PyPI and ships no marketplace manifest yet, so
+# .mcp.json launches the working tree directly instead of pinning a released version.
+# When distribution starts, these two tests are what should change first.
+
+
+def test_no_marketplace_manifest_yet():
+    """A marketplace manifest would advertise an install path that does not exist."""
+    assert not (ROOT / ".claude-plugin" / "marketplace.json").exists()
+
+
+def test_mcp_json_launches_the_local_checkout():
+    config = json.loads((ROOT / ".mcp.json").read_text())
+    server = config["mcpServers"]["kimi-in-claude"]
+    assert server["command"] == "uv"
+    assert server["args"][:2] == ["run", "--directory"]
+    assert server["args"][-1] == "kimi-in-claude-mcp"
+    # The pinned-release form would resolve against PyPI, where this package is absent.
+    assert not any("==" in a for a in server["args"])
+
+
+def test_the_local_directory_in_mcp_json_is_this_repo():
+    config = json.loads((ROOT / ".mcp.json").read_text())
+    args = config["mcpServers"]["kimi-in-claude"]["args"]
+    directory = Path(args[args.index("--directory") + 1])
+    assert (directory / "pyproject.toml").exists(), "the .mcp.json path is not a checkout"

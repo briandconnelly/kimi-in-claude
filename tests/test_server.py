@@ -36,8 +36,14 @@ from kimi_in_claude.schemas import (
 )
 
 
+@pytest.fixture
+def real_worktree():
+    """Opt out of the faked lifecycle below, for a test that exercises real git behavior."""
+    return True
+
+
 @pytest.fixture(autouse=True)
-def _fake_worktree_lifecycle(monkeypatch, tmp_path_factory):
+def _fake_worktree_lifecycle(request, monkeypatch, tmp_path_factory):
     """Fake the worktree lifecycle for the tool-layer tests in this module.
 
     Every tier now runs inside a throwaway worktree (kimi has no read-only sandbox), so
@@ -46,9 +52,11 @@ def _fake_worktree_lifecycle(monkeypatch, tmp_path_factory):
     the caller's tree is untouched — is covered against an actual repository in
     tests/test_runspace.py. This module tests the tool and envelope layer above it.
 
-    A test that needs the real thing can opt out with
-    `monkeypatch.undo()` or by using its own repo fixture.
+    A test that needs the real thing requests the `real_worktree` fixture.
     """
+    if "real_worktree" in request.fixturenames:
+        return
+
     from types import SimpleNamespace
 
     def _create(repo, *, timeout, on_parent=None):
@@ -378,9 +386,9 @@ def test_capability_summary_splits_inventory_from_model_discovery():
     coexisting somewhere (server.py CAPABILITY_SUMMARY discovery rules)."""
     summary = server.CAPABILITY_SUMMARY
     assert (
-        "Use kimi_capabilities for the full inventory. Before overriding the model or "
-        "reasoning_effort, use kimi_models (or the kimi://models resource) to discover "
-        "valid model slugs and each model's advertised reasoning-effort set" in summary
+        "Use kimi_capabilities for the full inventory. Before overriding model or "
+        "reasoning_effort, use kimi_models (or the kimi://models resource): `model` takes "
+        "an ALIAS defined in the user's kimi config.toml" in summary
     )
 
 
@@ -678,7 +686,7 @@ def test_files_read_matcher_rejects_decoupled_tokens():
     assert _GUARANTEE_MATCHERS["files_read"](decoupled) is False
     # …while a minimal genuine disclosure, in either token order, still registers.
     assert _GUARANTEE_MATCHERS["files_read"]("kimi may read other repo files and send them")
-    assert _GUARANTEE_MATCHERS["files_read"]("files kimi reads are sent to openai")
+    assert _GUARANTEE_MATCHERS["files_read"]("files kimi reads are sent to the provider")
 
 
 def test_global_skills_matcher_rejects_project_only_prose():
@@ -837,8 +845,8 @@ def test_untracked_param_preserves_egress_guarantee():
     """untracked='include' opt-in egress must stay disclosed inline (#333): choosing it
     SENDS untracked-file contents to OpenAI, and that is not derivable from the enum name."""
     d = _param_description("UntrackedParam")
-    assert "openai" in d and ("egress" in d or "send" in d), (
-        "untracked dropped the 'include sends contents to OpenAI' egress disclosure"
+    assert "provider" in d and ("egress" in d or "send" in d), (
+        "untracked dropped its 'include sends contents to the provider' egress disclosure"
     )
 
 
@@ -870,7 +878,9 @@ def test_delegate_no_network_not_misread_as_no_egress():
     Some negative_scope entry must tie the network-sandbox claim to the fact that
     the model call still sends task/repo context to OpenAI."""
     negative_scope = server.kimi_capabilities()["negative_scope"]
-    assert any("network" in entry.lower() and "openai" in entry.lower() for entry in negative_scope)
+    assert any(
+        "network" in entry.lower() and "provider" in entry.lower() for entry in negative_scope
+    )
 
 
 def test_status_caveat_names_review_and_delegate(monkeypatch, clean_env):
@@ -1619,7 +1629,9 @@ async def test_delegate_input_too_large(monkeypatch, clean_env, tmp_path):
     assert res["error"]["code"] == "input_too_large"
 
 
-async def test_delegate_baseline_commit_failure_no_spend(monkeypatch, clean_env, tmp_path):
+async def test_delegate_baseline_commit_failure_no_spend(
+    monkeypatch, clean_env, tmp_path, real_worktree
+):
     # Regression for issue #4: if the baseline commit fails after the live patch
     # applies, delegate must fail with worktree_error BEFORE calling Kimi, so the
     # caller's pre-existing changes are never returned as Kimi's diff.
@@ -2395,7 +2407,7 @@ def test_job_status_model_requires_result_ok_from_store():
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "kimi-in-claude/0.1/schema-75"
+    assert FINGERPRINT == "kimi-in-claude/0.1/schema-1"
 
 
 def test_capabilities_payload_discloses_fingerprint_covers():
@@ -3788,12 +3800,12 @@ async def test_replayed_error_preserves_the_originating_version(monkeypatch, cle
     stored = _serialize_error(
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
     )
-    stored["meta"]["server_version"] = "0.1.0"  # an older run's stamped release
+    stored["meta"]["server_version"] = "0.0.1"  # an older run's stamped release
     store = _FakeStore(record=_ok_record("done"), result_json=stored)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))
     assert res["ok"] is False
-    assert res["meta"]["server_version"] == "0.1.0"  # NOT __version__
+    assert res["meta"]["server_version"] == "0.0.1"  # NOT __version__
     assert res["meta"]["server_version"] != __version__
 
 

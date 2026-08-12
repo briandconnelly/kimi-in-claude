@@ -10,6 +10,28 @@ from kimi_in_claude import config, orchestration, prompts, server
 from kimi_in_claude._core import runtime
 
 
+@pytest.fixture(autouse=True)
+def _fake_worktree_lifecycle(monkeypatch, tmp_path_factory):
+    """Every tier now runs in a throwaway worktree (kimi has no read-only sandbox), so the
+    tool-layer tests here would otherwise each need a seeded git repo. The real worktree
+    behavior is covered against an actual repository in tests/test_runspace.py."""
+    from types import SimpleNamespace
+
+    from kimi_in_claude._core import worktree as wt
+
+    def _create(repo, *, timeout, on_parent=None):
+        path = tmp_path_factory.mktemp("kic-worktree")
+        if on_parent is not None:
+            on_parent(str(path))
+        return SimpleNamespace(path=str(path), baseline_warning=None)
+
+    monkeypatch.setattr(wt, "create", _create)
+    monkeypatch.setattr(wt, "remove", lambda *a, **k: None)
+    monkeypatch.setattr(wt, "path_aliases", lambda *a, **k: ())
+    monkeypatch.setattr(wt, "capture_diff", lambda *a, **k: "")
+    monkeypatch.setattr(wt, "is_git_repo", lambda *a, **k: True)
+
+
 async def _run_review_direct(tmp_path, *, scope="working_tree", base=None, commit=None):
     # The sync review tool now runs in a detached worker (#169); its run-behavior
     # branches are exercised by calling the same orchestration entry point directly.
@@ -107,7 +129,7 @@ def test_worktree_base_default(clean_env):
 def test_supported_versions_partial_token(clean_env):
     # A token without a minor is skipped; falls back to built-in set.
     clean_env.setenv("KIMI_IN_CLAUDE_SUPPORTED_VERSIONS", "5")
-    assert config.version_supported("kimi-cli 0.147.0") is True
+    assert config.version_supported("0.35.0") is True
 
 
 # --- runtime property --------------------------------------------------------
@@ -217,7 +239,7 @@ async def test_consult_uses_roots(monkeypatch, clean_env, tmp_path):
 
 # --- server status: could-not-determine auth --------------------------------
 def test_status_auth_unknown(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (None, None))
     res = server.kimi_status()
     assert res["ready"] is False
@@ -233,7 +255,7 @@ def test_status_version_unsupported_warning(monkeypatch, clean_env):
 
 
 def test_status_flags_warning(monkeypatch, clean_env):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "kimi-cli 0.147.0")
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "ok"))
     monkeypatch.setattr(server.preflight, "missing_expected_flags", lambda fs: ["--sandbox"])
     res = server.kimi_status()
