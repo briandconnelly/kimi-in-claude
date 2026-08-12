@@ -18,6 +18,11 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
+- `.mcp.json` installs the server from the public GitHub remote at a pinned release tag
+  (`uvx --from git+…@vX.Y.Z`) instead of launching a hard-coded local checkout with
+  `uv run --directory`. Installing no longer requires a clone, and the launch no longer depends on
+  a path that exists only on the author's machine. `tests/test_packaging.py` now asserts the pin
+  tracks the version in `pyproject.toml`.
 - `model` now takes an alias from the user's `config.toml`; the catalog is read live from
   `kimi provider list --json`, and the provider `apiKey` in that payload never reaches an envelope.
 - `KIMI_IN_CLAUDE_EXTRA_ARGS` refuses every value: kimi exposes no safe passthrough and reuses

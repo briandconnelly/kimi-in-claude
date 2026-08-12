@@ -17,7 +17,8 @@ Closes #
       call: see AGENTS.md → Versioning.
 - [ ] If the CLI contract changed, `cli_contract.py` and `COMPATIBILITY.md` were updated.
 - [ ] On a release: version bumped together across `pyproject.toml`, `.claude-plugin/plugin.json`,
-      the `kimi-in-claude==X.Y.Z` pin in `.mcp.json`, and `CHANGELOG.md`.
+      the `@vX.Y.Z` tag pinned in `.mcp.json`, and `CHANGELOG.md` — and the matching `vX.Y.Z` tag
+      pushed to the remote, or `.mcp.json` resolves to nothing for every user.
 
 ## Notes for reviewers
 

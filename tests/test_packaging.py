@@ -336,11 +336,14 @@ def test_delegate_async_command_present():
 
 
 # --------------------------------------------------------------------------- #
-# Distribution: local-only for now
+# Distribution: a pinned git tag
 # --------------------------------------------------------------------------- #
-# kimi-in-claude is not published to PyPI and ships no marketplace manifest yet, so
-# .mcp.json launches the working tree directly instead of pinning a released version.
-# When distribution starts, these two tests are what should change first.
+# kimi-in-claude is not published to PyPI, so .mcp.json installs it from the public
+# GitHub remote at a pinned tag instead. The marketplace manifest is unaffected: it
+# still installs from a local checkout, and only the MCP server launch resolves
+# remotely.
+
+GIT_SOURCE = "git+https://github.com/briandconnelly/kimi-in-claude.git"
 
 
 def test_marketplace_manifest_installs_from_this_checkout():
@@ -354,27 +357,25 @@ def test_marketplace_manifest_installs_from_this_checkout():
     assert plugins[0]["source"] == "./"
 
 
-def test_mcp_json_launches_the_local_checkout():
+def test_mcp_json_installs_from_the_pinned_git_remote():
     config = json.loads((ROOT / ".mcp.json").read_text())
-    server = config["mcpServers"]["kimi-in-claude"]
-    assert server["command"] == "uv"
-    assert server["args"][:2] == ["run", "--directory"]
-    assert server["args"][-1] == "kimi-in-claude-mcp"
-    # The pinned-release form would resolve against PyPI, where this package is absent.
-    assert not any("==" in a for a in server["args"])
+    server_config = config["mcpServers"]["kimi-in-claude"]
+    assert server_config["command"] == "uvx"
+    assert server_config["args"][0] == "--from"
+    assert server_config["args"][-1] == "kimi-in-claude-mcp"
+    # No local path may survive the switch. A `--directory` launch silently runs whatever
+    # is in the author's working tree, and does not resolve at all on any other machine.
+    assert "--directory" not in server_config["args"]
+    # The PyPI form would resolve against an index where this package is absent.
+    assert not any("==" in a for a in server_config["args"])
 
 
-def test_the_local_directory_in_mcp_json_is_absolute():
-    """The launch path must be absolute — a relative one would resolve against whatever
-    directory the MCP client happened to start in.
-
-    Whether it points at a real checkout is only checkable on the machine that wrote it,
-    so that half is skipped elsewhere (CI clones to a different path).
-    """
+def test_mcp_json_pins_the_tag_for_the_current_version():
+    """The pinned tag tracks pyproject's version. If it lags, a release ships a
+    .mcp.json that installs the PREVIOUS release — a silent downgrade for every
+    installed user, with nothing in the launch output to show it happened."""
     config = json.loads((ROOT / ".mcp.json").read_text())
     args = config["mcpServers"]["kimi-in-claude"]["args"]
-    directory = Path(args[args.index("--directory") + 1])
-    assert directory.is_absolute()
-    if not directory.exists():
-        pytest.skip("the configured checkout path does not exist on this machine")
-    assert (directory / "pyproject.toml").exists(), "the .mcp.json path is not a checkout"
+    ref = args[args.index("--from") + 1]
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert ref == f"{GIT_SOURCE}@v{pyproject['project']['version']}"

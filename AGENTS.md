@@ -151,10 +151,16 @@ deliberate: update the classifiers, the CI matrix, and `requires-python` togethe
 
 ## Project status
 
-**Local-only.** This is not published to PyPI, ships no marketplace manifest, and has no GitHub
-remote yet, so `.mcp.json` launches the working tree with `uv run --directory` instead of pinning a
-release. There is no release process to follow and no issue-claim protocol; when distribution
-starts, `tests/test_packaging.py` is what should change first.
+**Installed from a pinned git tag.** The repo is public at
+`https://github.com/briandconnelly/kimi-in-claude`. The plugin is not published to PyPI, so
+`.mcp.json` installs it with `uvx --from git+<remote>@v<version>` pinned to a release tag. The
+marketplace manifest is separate and still installs from a local checkout (`source: "./"`).
+
+A release therefore moves three things together: the version in `pyproject.toml`, the tag pinned in
+`.mcp.json`, and the `v<version>` tag pushed to the remote. `tests/test_packaging.py` guards the
+first two against drift. Nothing can guard the third from inside the repo — an unpushed tag makes
+`.mcp.json` unresolvable for every user but leaves the working tree green, so push the tag as part
+of the release, not after it. There is no issue-claim protocol.
 
 ## The safety model, in one place
 

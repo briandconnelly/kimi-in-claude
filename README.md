@@ -63,8 +63,9 @@ kimi --version
 kimi provider list --json   # at least one provider and one [models."<alias>"] entry
 ```
 
-This is not published yet, so install it as a local plugin: point your Claude Code MCP config at
-this checkout (see [`.mcp.json`](.mcp.json), which launches it with `uv run --directory`).
+This is not on PyPI, but it does not need a local checkout either: [`.mcp.json`](.mcp.json)
+installs the server directly from this repo at a pinned release tag (`uvx --from git+…@vX.Y.Z`).
+Copy that entry into your Claude Code MCP config.
 
 Then run `/kimi:status` in Claude Code. It is free — no model call — and reports whether the CLI is
 found, in the tested version range, and backed by a configured provider.
