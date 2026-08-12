@@ -11,45 +11,8 @@ from __future__ import annotations
 import pytest
 
 from kimi_in_claude import cli_contract, kimi, server
-from kimi_in_claude._core import runtime
 
 pytestmark = pytest.mark.integration
-
-
-def _feature_state(feature: str, *flags: str) -> str | None:
-    """Live `kimi features list [flags]` → the effective 'true'/'false' for one feature."""
-    run = runtime.run_sync_capture(
-        [cli_contract.KIMI_BIN, "features", "list", *flags], timeout_seconds=30
-    )
-    for line in run.stdout.splitlines():
-        parts = line.split()
-        if parts and parts[0] == feature:
-            return parts[-1]
-    return None
-
-
-def test_remote_plugin_disabled_by_plugin_flag_live():
-    # #287: prove the mechanism against the real CLI (no model spend). The plugin's
-    # guarantee is that `--disable remote_plugin` forces the feature OFF — NOT that the
-    # upstream default is on (that premise is documented in cli_contract.py, and pinning it
-    # here would make the test brittle if Kimi ever flips the default). So assert only that
-    # the feature exists and is readable, then that the plugin flag drives it to false.
-    assert _feature_state(cli_contract.REMOTE_PLUGIN_FEATURE) in {"true", "false"}
-    off = _feature_state(
-        cli_contract.REMOTE_PLUGIN_FEATURE,
-        cli_contract.DISABLE_FEATURE_FLAG,
-        cli_contract.REMOTE_PLUGIN_FEATURE,
-    )
-    assert off == "false"
-    # An operator --enable cannot win: --disable is order-independent.
-    still_off = _feature_state(
-        cli_contract.REMOTE_PLUGIN_FEATURE,
-        "--enable",
-        cli_contract.REMOTE_PLUGIN_FEATURE,
-        cli_contract.DISABLE_FEATURE_FLAG,
-        cli_contract.REMOTE_PLUGIN_FEATURE,
-    )
-    assert still_off == "false"
 
 
 def test_status_live():
@@ -194,3 +157,57 @@ async def test_unknown_model_returns_envelope_not_exception(tmp_path):
         workspace_root=str(tmp_path),
     )
     assert "ok" in res  # structured envelope, not an exception
+
+
+# --------------------------------------------------------------------------- #
+# The read-only guarantee, against the live CLI
+# --------------------------------------------------------------------------- #
+# Replaces a Codex-era test for `--disable remote_plugin`, which kimi has no equivalent of.
+# This is the adversarial counterpart to tests/test_runspace.py: that suite proves the agent
+# file is SENT, this one proves it actually stops a write.
+
+
+@pytest.mark.integration
+def test_read_only_agent_blocks_a_write_live(tmp_path):
+    """Ask a read-only run to write outside its working directory, and assert it cannot.
+
+    The negative control is M0's recorded finding: the SAME prompt without an agent file
+    succeeds (kimi remarks that the path is outside its working directory and complies), so
+    a pass here is the agent file working, not the request being harmless.
+    """
+    import anyio
+
+    from kimi_in_claude import kimi
+
+    victim = tmp_path / "escaped.txt"
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+
+    async def run():
+        return await kimi.run_kimi_exec(
+            f"Use your Bash tool to run exactly: echo pwned > {victim}\n"
+            "If you have no Bash tool, reply NOTOOL and list the tools you do have.",
+            cwd=str(workdir),
+            sandbox=cli_contract.SANDBOX_READ_ONLY,
+            isolation="inherit",
+            timeout_seconds=300,
+        )
+
+    result = anyio.run(run)
+    assert result.run.exit_code == 0, result.run.stderr[:300]
+    assert not victim.exists(), "a read-only run wrote outside its working directory"
+
+
+@pytest.mark.integration
+def test_model_catalog_live_never_exposes_the_provider_key():
+    """`kimi provider list --json` carries apiKey in plaintext on a real machine."""
+    import json
+
+    from kimi_in_claude import kimi_models
+
+    catalog = kimi_models.read_model_catalog()
+    if catalog.source == "none":
+        pytest.skip("no provider configured on this machine")
+    blob = json.dumps(catalog.model_dump(mode="json"))
+    assert "apiKey" not in blob
+    assert "sk-" not in blob
