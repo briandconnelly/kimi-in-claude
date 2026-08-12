@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -200,8 +201,11 @@ def test_the_handshake_dir_is_outside_any_repository(tmp_path):
     a repo tracking `.kimi-in-claude` as a symlink would redirect these writes outside the
     tree — and an agent file redirected to /dev/null could void the read-only guarantee."""
     d = kimi.create_handshake_dir()
-    assert not Path(d).is_relative_to(tmp_path)
-    assert Path(d).is_dir()
+    try:
+        assert not Path(d).is_relative_to(tmp_path)
+        assert Path(d).is_dir()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_handshake_refuses_to_follow_a_planted_symlink(tmp_path):

@@ -11,6 +11,7 @@ about kimi — so they run without the CLI and without model spend.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -80,15 +81,23 @@ def marker() -> str:
     return f"kic-worktree-{uuid.uuid4().hex}"
 
 
-def test_find_orphans_locates_a_process_by_marker(marker):
-    proc = _spawn_detached_child(marker)
-    try:
-        time.sleep(0.4)
-        found = runtime.find_orphans(marker)
-        assert found, "sweep found nothing — a real orphan would have been missed"
-    finally:
-        with pytest.raises(BaseException) if False else _suppress():
-            os.killpg(proc.pid, signal.SIGKILL)
+@pytest.fixture
+def reap(marker):
+    """Reclaim anything this test spawned.
+
+    Killing only the leader's process group is NOT enough — that is the whole defect these
+    tests demonstrate — so teardown uses the sweep itself. Without this the suite leaks a
+    live `sleep` per test, which is how it was caught.
+    """
+    yield
+    with contextlib.suppress(ValueError):
+        runtime.sweep_orphans(marker, grace_seconds=0.2)
+
+
+def test_find_orphans_locates_a_process_by_marker(marker, reap):
+    _spawn_detached_child(marker)
+    time.sleep(0.4)
+    assert runtime.find_orphans(marker), "sweep found nothing — a real orphan would be missed"
 
 
 def test_find_orphans_is_empty_for_an_unused_marker():
@@ -102,7 +111,7 @@ def test_find_orphans_never_returns_our_own_pid(marker):
     assert os.getpid() not in runtime.find_orphans(marker)
 
 
-def test_sweep_orphans_kills_a_survivor_of_killpg(marker):
+def test_sweep_orphans_kills_a_survivor_of_killpg(marker, reap):
     """The M0-7 scenario end to end: killpg leaves the child, the sweep reclaims it."""
     proc = _spawn_detached_child(marker)
     time.sleep(0.4)
@@ -127,7 +136,7 @@ def test_sweep_orphans_kills_a_survivor_of_killpg(marker):
     assert runtime.find_orphans(marker) == []
 
 
-def test_sweep_orphans_reclaims_an_unmarked_grandchild(marker):
+def test_sweep_orphans_reclaims_an_unmarked_grandchild(marker, reap):
     """A matched process's own children do NOT carry the marker.
 
     Regression for a gap found by an independent `pgrep` check during the live kimi test:
