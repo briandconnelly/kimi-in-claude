@@ -1,0 +1,13 @@
+{
+  "name": "kimi-in-claude",
+  "owner": {
+    "name": "Brian Connelly"
+  },
+  "plugins": [
+    {
+      "name": "kimi-in-claude",
+      "source": "./",
+      "description": "Call Kimi Code from Claude Code for delegation, review, and second opinions."
+    }
+  ]
+}

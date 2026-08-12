@@ -343,9 +343,15 @@ def test_delegate_async_command_present():
 # When distribution starts, these two tests are what should change first.
 
 
-def test_no_marketplace_manifest_yet():
-    """A marketplace manifest would advertise an install path that does not exist."""
-    assert not (ROOT / ".claude-plugin" / "marketplace.json").exists()
+def test_marketplace_manifest_installs_from_this_checkout():
+    """The manifest exists so the plugin can be installed LOCALLY:
+    `/plugin marketplace add <this directory>`. Its source stays "./" — pointing it at a
+    git URL would advertise a distribution that does not exist yet."""
+    manifest = _load_json(".claude-plugin/marketplace.json")
+    assert manifest["name"] == "kimi-in-claude"
+    plugins = manifest["plugins"]
+    assert [p["name"] for p in plugins] == ["kimi-in-claude"]
+    assert plugins[0]["source"] == "./"
 
 
 def test_mcp_json_launches_the_local_checkout():
