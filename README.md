@@ -63,9 +63,15 @@ kimi --version
 kimi provider list --json   # at least one provider and one [models."<alias>"] entry
 ```
 
-This is not on PyPI, but it does not need a local checkout either: [`.mcp.json`](.mcp.json)
-installs the server directly from this repo at a pinned release tag (`uvx --from git+…@vX.Y.Z`).
-Copy that entry into your Claude Code MCP config.
+Install the plugin. In Claude Code:
+
+```
+/plugin marketplace add briandconnelly/kimi-in-claude
+/plugin install kimi-in-claude@kimi-in-claude
+```
+
+No clone is needed. The plugin ships [`.mcp.json`](.mcp.json), which installs the server from this
+repo at a pinned release tag (`uvx --from git+…@vX.Y.Z`).
 
 Then run `/kimi:status` in Claude Code. It is free — no model call — and reports whether the CLI is
 found, in the tested version range, and backed by a configured provider.
@@ -134,6 +140,22 @@ uv sync
 uv run pytest                                     # unit + contract suite, 95% coverage floor
 uv run pytest -m integration --no-cov             # live tests against the real kimi CLI
 uv run ruff check . && uv run ruff format --check . && uv run ty check
+```
+
+To install from a checkout, register it as a marketplace: `/plugin marketplace add <path to this
+checkout>`, then install as above. Note that this still runs the **released** server: `.mcp.json`
+is pinned to a tag, so it is not affected by your edits. To run the working tree, override the
+server in the consuming project's own `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "kimi-in-claude": {
+      "command": "uv",
+      "args": ["run", "--directory", "<path to this checkout>", "kimi-in-claude-mcp"]
+    }
+  }
+}
 ```
 
 `src/kimi_in_claude/_core/` holds CLI-agnostic machinery and must never import its parent package.
