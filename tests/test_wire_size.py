@@ -125,6 +125,10 @@ from moonbridge.server import mcp
 # the skill-name egress path, and extra_skill_dirs moved to kimi://params — 8 tools carry
 # it, so ~560 B): 82,866 bytes (-600 B). Budget lowered to the next 500 above the measured
 # value, banking both reductions so a regression cannot silently spend them.
+# Measured 2026-08-13 (separating-context-from-constraints audit: kimi_status's spend rule
+# gained a `Spend:` label matching the sibling directive blocks, and the RateLimit schema
+# description dropped its Codex-provenance aside): 82,869 bytes (+3 B) — still within
+# budget, no further change.
 TOOLS_LIST_BYTE_BUDGET = 83_000
 
 # The measured tools/list size as of the last deliberate review above — NOT a second gate.
@@ -137,7 +141,7 @@ TOOLS_LIST_BYTE_BUDGET = 83_000
 # history above is "still within budget, no further change" rows that grew the measured size
 # without touching the budget; the target must track every one of those too, or it silently
 # goes stale between the raises).
-TOOLS_LIST_BYTE_TARGET = 82_866
+TOOLS_LIST_BYTE_TARGET = 82_869
 
 
 def _budget_failure_message(measured: int) -> str:

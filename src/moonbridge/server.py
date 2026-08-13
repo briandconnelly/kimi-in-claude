@@ -1316,11 +1316,11 @@ def kimi_status() -> dict:
     version, and report the resolved defaults. Free — no model call. Run it before
     your first paid call in a session to confirm setup, and again whenever a run
     fails with a setup error.
-    The `rate_limit` block always reports `unavailable`, and that is not a failure: kimi
-    exposes no quota-read channel and its provider is user-configured, so there is nothing
-    authoritative to report. Do not plan spend around it. The only quota signal this server
-    can give you is the `kimi_rate_limited` error on a call that was actually throttled;
-    it carries `retry_after_ms`."""
+    Spend: do not plan spend around `rate_limit` — it always reports `unavailable`, and that
+    is not a failure. kimi exposes no quota-read channel and its provider is user-configured,
+    so there is nothing authoritative to report. The only quota signal this server can give
+    you is the `kimi_rate_limited` error on a call that was actually throttled; it carries
+    `retry_after_ms`."""
     d = config.defaults()
     version = kimi.kimi_version()
     found = version is not None

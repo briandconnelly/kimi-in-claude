@@ -68,7 +68,7 @@ _FINGERPRINT_COVERS_DESC = (
 # this and regenerate the fixture in the same commit. It is an acknowledgment guard — it surfaces
 # the drift, it does not mechanically force the integer bump (the snapshot and this string are
 # independently editable).
-FINGERPRINT = "moonbridge/0.1/schema-3"
+FINGERPRINT = "moonbridge/0.1/schema-4"
 
 # The persisted result-format version, stamped into each job record's generic metadata
 # (`extra.result_format`) at spawn so replay can tell a cross-release payload from a corrupt
@@ -522,23 +522,26 @@ class RateLimitWindow(BaseModel):
     reset_passed: bool = False
 
 
+# Provenance, deliberately NOT in the docstring below: that text ships to clients as a
+# schema description, and where this shape came from informs a maintainer, not a caller.
+# It came from the Codex plugin this server was ported from, whose `kimi app-server` had
+# `account/rateLimits/read`. kimi has no equivalent, which is why nothing populates it.
 class RateLimit(BaseModel):
     """Agent-facing rate-limit quota. On this server it is always `unavailable`.
 
-    ON THIS SERVER, ONLY ONE STATE IS REACHABLE. kimi exposes no quota-read channel — the
-    Codex plugin this one was ported from had `kimi app-server`'s `account/rateLimits/read`,
-    and kimi has no equivalent — and its provider is user-configured, so there is nothing
-    authoritative to report. `kimi_status` therefore returns `unavailable`, and `Meta.rate_limit`
-    stays null. That is not a failure, and agents must not plan spend around this block. The
-    only quota signal this server can give is the `kimi_rate_limited` error on a call that was
-    actually throttled, which carries `retry_after_ms`.
+    RULES. Do not plan spend around this block. Treat every field and state below as a
+    reserved shape, not as behavior you will observe.
 
-    The remaining fields and states below are RESERVED, not emitted. They are kept so a future
-    kimi that does expose quota can populate them without a breaking schema change; treat the
-    prose as a description of that reserved shape, not of behavior you will observe. `primary`
-    is the shorter/rolling window, `secondary` the longer one; `available` would attest only
-    that reported windows are healthy, and `blocked` would report a backend SPEND control
-    (`spend_control_reached`) that no quota reset clears."""
+    Why: kimi exposes no quota-read channel and its provider is user-configured, so there is
+    nothing authoritative to report. `kimi_status` returns `unavailable` and `Meta.rate_limit`
+    stays null; that is not a failure. The only quota signal this server can give is the
+    `kimi_rate_limited` error on a throttled call, which carries `retry_after_ms`.
+
+    Reserved shape: the fields below are kept so a future kimi that exposes quota can populate
+    them without a breaking schema change. `primary` is the shorter/rolling window, `secondary`
+    the longer one; `available` would attest only that reported windows are healthy, and
+    `blocked` would report a backend SPEND control (`spend_control_reached`) that no quota
+    reset clears."""
 
     model_config = ConfigDict(extra="forbid")
     status: RateLimitStatus

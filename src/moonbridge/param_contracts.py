@@ -79,7 +79,7 @@ _ISOLATION_FULL = (
     "Which skills Kimi loads for this run: 'inherit' (its own user/project discovery) or "
     "'ignore-skills' (that discovery replaced with an empty directory). Defaults to the "
     "server's configured value — built-in 'inherit'; kimi_status reports the resolved one. "
-    "This setting is NARROWER than it sounds, and the limits are the load-bearing part: "
+    "Its limits matter more than its name: "
     "Kimi's built-in skills always load, and the resolved workspace's AGENTS.md is always "
     "read, under either value. Skill names and descriptions reach the model up front, so a "
     "skill's content can be sent to your provider even when your prompt never mentions it, "

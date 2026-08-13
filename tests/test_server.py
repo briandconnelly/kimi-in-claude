@@ -405,7 +405,11 @@ async def test_kimi_status_states_an_actionable_rate_limit_posture():
     # The docstring wraps across lines; normalize whitespace before matching the clause.
     desc = " ".join((tools["kimi_status"].description or "").split())
     assert "always reports `unavailable`, and that is not a failure" in desc
-    assert "Do not plan spend around it" in desc
+    # The rule carries a label, like every other directive block on this server
+    # (`PAID —`, `Free — no model call`, `Data egress:`). A separating-context-from-
+    # constraints audit found it as bare mid-paragraph prose; the label is the fix, so
+    # matching the label — not just the words — is what keeps the fix from regressing.
+    assert "Spend: do not plan spend around `rate_limit`" in desc
     assert "kimi_rate_limited" in desc, "the one real quota signal must be named"
     # Regression guards: neither the pre-#198 bare fact nor the #198 recommendation may
     # return — both described states this server cannot emit.
@@ -2416,7 +2420,7 @@ def test_job_status_model_requires_result_ok_from_store():
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "moonbridge/0.1/schema-3"
+    assert FINGERPRINT == "moonbridge/0.1/schema-4"
 
 
 def test_capabilities_payload_discloses_fingerprint_covers():
@@ -4208,7 +4212,7 @@ async def test_replay_normalizes_fingerprint_but_not_version(monkeypatch, clean_
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
     )
     stored["meta"]["server_version"] = "0.1.0"
-    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-3"  # a pre-upgrade worker
+    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-4"  # a pre-upgrade worker
     store = _FakeStore(record=_ok_record("done"), result_json=stored)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))

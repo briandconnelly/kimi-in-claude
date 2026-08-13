@@ -38,7 +38,15 @@ All notable changes to this project are documented here, following
   subcommand and no sandbox; what constrains a read-only run is the generated agent profile.
   `cli_contract.FORBIDDEN_SURFACE_PHRASES` now owns that ban and
   `tests/test_surface_honesty.py` enforces it against the built manifest.
-- `FINGERPRINT` is `moonbridge/0.1/schema-3`. `RESULT_FORMAT` is unchanged: only the `schemas`
+- Binding rules in the rewritten prose are now structurally separated from their rationale,
+  after a `separating-context-from-constraints` audit found four R1 defects. The `RateLimit`
+  schema description carried two rules across two paragraphs with no rule section — they now
+  sit under a `RULES.` heading, with the rationale under `Why:` and the never-emitted fields
+  under `Reserved shape:`. `kimi_status`'s spend rule gained a `Spend:` label, matching the
+  `PAID —` / `Data egress:` blocks used everywhere else on this server. The `RateLimit`
+  Codex-provenance aside moved to an internal comment: it informs a maintainer, not a caller,
+  and it was shipping to clients as part of a schema description.
+- `FINGERPRINT` is `moonbridge/0.1/schema-4`. `RESULT_FORMAT` is unchanged: only the `schemas`
   view of the result-format snapshot moved, the `serialized` view is byte-identical, and no
   stored job record can contain a removed code or the never-populated field.
 
