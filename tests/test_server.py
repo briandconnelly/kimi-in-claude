@@ -4212,7 +4212,14 @@ async def test_replay_normalizes_fingerprint_but_not_version(monkeypatch, clean_
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
     )
     stored["meta"]["server_version"] = "0.1.0"
-    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-5"  # a pre-upgrade worker
+    # DELIBERATELY not the current FINGERPRINT, and never updated to track it: the whole
+    # point is that a STALE stored id gets rewritten. This literal read "schema-1" while
+    # FINGERPRINT was also schema-1, so the test passed with normalization disabled — it
+    # could not fail (Copilot review). A blanket fingerprint bump then carried the defect
+    # forward. The assertion below pins the invariant so that cannot recur silently.
+    stale = "moonbridge/0.0/never-current"
+    assert stale != FINGERPRINT, "the planted fingerprint must differ from the current one"
+    stored["meta"]["fingerprint"] = stale  # a pre-upgrade worker
     store = _FakeStore(record=_ok_record("done"), result_json=stored)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))

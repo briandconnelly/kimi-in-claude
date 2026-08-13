@@ -200,16 +200,25 @@ _FANOUT_BUDGET_BYTES = 1_500
 # which is the exact stale-exemption regression this block claims to prevent (Codex review).
 # Exceeding the ceiling fails and forces a re-measurement, not a silent pass.
 _FANOUT_EXEMPT: dict[str, tuple[int, str]] = {
-    # 13 tools x 180 chars = 2431 B. The shortest summary still stating "absolute", the cwd
-    # fallback, and meta.workspace_warning came to 178 chars, so registering saved 26 B.
-    "workspace_root": (2600, "measured 2026-08-13: registering saves 26 B (178 vs 180 chars)"),
+    # 13 tools x 180 chars = 2392 B on the wire (UTF-8, as the transport sends it). The
+    # shortest summary still stating "absolute", the cwd fallback, and
+    # meta.workspace_warning came to 178 chars, so registering saved 26 B.
+    "workspace_root": (2550, "measured 2026-08-13: registering saves 26 B (178 vs 180 chars)"),
 }
 
 
 def _wire_parameter_costs() -> dict[str, tuple[int, int, int]]:
-    """name -> (tool count, description chars, total inlined description bytes)."""
+    """name -> (tool count, description chars, total inlined description BYTES).
+
+    Bytes are counted the way the transport actually sends them: the MCP SDK serializes
+    through pydantic's ``model_dump_json``, which emits raw UTF-8 rather than backslash-u
+    escapes, so an em-dash costs 3 bytes and not 6. This used ``json.dumps`` at its
+    ``ensure_ascii=True`` default, which disagreed with
+    ``TestAuditTwoCompaction._serialized_bytes`` in this same file and inflated every
+    non-ASCII description (Copilot review). Both now use one convention, and it is the
+    one that matches the wire.
+    """
     import asyncio
-    import json
 
     from fastmcp import Client
 
@@ -223,7 +232,8 @@ def _wire_parameter_costs() -> dict[str, tuple[int, int, int]]:
         for name, prop in (t.inputSchema or {}).get("properties", {}).items():
             desc = prop.get("description") or ""
             count, _, total = seen.get(name, (0, 0, 0))
-            seen[name] = (count + 1, len(desc), total + len(json.dumps(desc)))
+            wire = TestAuditTwoCompaction._serialized_bytes(desc)
+            seen[name] = (count + 1, len(desc), total + wire)
     return seen
 
 
