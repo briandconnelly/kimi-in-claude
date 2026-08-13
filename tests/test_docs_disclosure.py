@@ -48,6 +48,12 @@ def test_disclosure_sites_exist():
         assert (_REPO_ROOT / relpath).is_file(), relpath
 
 
+def test_readme_does_not_recommend_secret_bearing_provider_dump():
+    """`provider list --json` includes the configured provider API key in plaintext."""
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "kimi provider list --json" not in readme
+
+
 def test_site_list_matches_the_authoritative_rule():
     """The tuple above and cli_contract.py's RULE must name the same doc sites.
 
