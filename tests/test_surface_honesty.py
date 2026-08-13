@@ -63,9 +63,49 @@ def test_forbidden_phrases_are_still_contradicted_by_the_contract():
 # --- M1: rate_limit advertises a channel that does not exist ---------------------------
 
 
-def test_status_result_rate_limit_is_structurally_unavailable():
-    """The premise of the description test below: no code path can populate this."""
+# The states the schema still accepts. The description below promises exactly one of them
+# is reachable, so the guard has to constrain the TOOL, not the schema default: an earlier
+# version of this test asserted only `StatusResult`'s default_factory, which stays green
+# while `kimi_status()` constructs its own `RateLimit(status="available")` (Codex review).
+_UNREACHABLE_STATES = tuple(s for s in schemas.RateLimitStatus.__args__ if s != "unavailable")
+
+
+@pytest.mark.parametrize(
+    ("version", "login"),
+    [
+        ("0.35.0", (True, "Kimi reports 1 configured provider(s).")),  # ready
+        ("0.35.0", (False, "no provider configured")),  # unauthenticated
+        ("0.35.0", (None, None)),  # auth indeterminate — the probe did not answer
+        (None, (None, None)),  # binary missing
+    ],
+    ids=["ready", "unauthenticated", "auth_indeterminate", "kimi_not_found"],
+)
+def test_kimi_status_returns_unavailable_in_every_readiness_state(
+    monkeypatch, clean_env, version, login
+):
+    """The description's promise, checked against the tool's actual output.
+
+    `unavailable` has to hold on every path, not just the happy one — a readiness branch
+    that populated a real quota state would resurrect the spend-planning contradiction the
+    description now rules out.
+    """
+    from moonbridge import server
+
+    monkeypatch.setattr(server.kimi, "kimi_version", lambda: version)
+    monkeypatch.setattr(server.kimi, "login_status", lambda: login)
+    got = server.kimi_status()["rate_limit"]["status"]
+    assert got == "unavailable", (
+        f"kimi_status returned {got!r}; the description promises unavailable"
+    )
+    assert got not in _UNREACHABLE_STATES
+
+
+def test_rate_limit_schema_default_is_unavailable():
+    """Secondary schema check, kept as a floor under the behavioral test above."""
     assert schemas.StatusResult.model_fields["rate_limit"].default_factory().status == "unavailable"
+    # Guard the guard: if the Literal ever loses its other states, the parametrization above
+    # degenerates to a tautology and this says so.
+    assert _UNREACHABLE_STATES, "RateLimitStatus has only one state; the behavioral test is vacuous"
 
 
 def test_kimi_status_does_not_promise_a_live_quota_read(wire: dict):
@@ -90,17 +130,18 @@ def test_capability_summary_and_kimi_status_agree_on_quota(wire: dict):
 
 _TRANSFER_CODES = ("transfer_unsupported", "transfer_failed", "transfer_incomplete")
 
-# Tokens matching the `kimi_*` shape that are error codes, not tools. Listed explicitly so
-# a genuinely missing tool cannot hide behind a broad regex exclusion.
-_KNOWN_NON_TOOL_TOKENS = frozenset(
-    {
-        "kimi_not_found",
-        "kimi_auth_required",
-        "kimi_auth_indeterminate",
-        "kimi_rate_limited",
-        "kimi_failed",
-    }
-)
+
+# `kimi_*` tokens that are error codes, not tools. DERIVED from the published Literal, not
+# hand-listed: the hand-list carried a phantom (`kimi_failed`, never an ErrorCode) that would
+# have exempted a genuinely missing tool, and it could not track codes added or removed later.
+def _error_code_tokens() -> frozenset[str]:
+    return frozenset(c for c in schemas.ErrorCode.__args__ if c.startswith("kimi_"))
+
+
+# Verbs that make a token a CALL, not a mention. An error code named here is being used as a
+# callable surface, so the code-name exemption above must not apply (Codex review: prose like
+# "retry kimi_rate_limited" slipped through a blanket token exemption).
+_CALL_PHRASE = re.compile(r"\b(?:call|run|rerun|retry|invoke|use)\s+`?(kimi_[a-z_]+)`?", re.I)
 
 
 @pytest.mark.parametrize("code", _TRANSFER_CODES)
@@ -116,30 +157,66 @@ def test_error_code_literal_drops_transfer_codes():
     assert not published & set(_TRANSFER_CODES)
 
 
-def test_every_repair_hint_names_a_real_callable_surface(wire: dict):
-    """The generalized guard. `transfer_unsupported` told agents to "retry kimi_transfer".
+def _repair_hint_problems(wire: dict, table: dict) -> list[str]:
+    """Every callable surface a repair hint names must exist. Three checks, not one.
 
-    A repair hint that names a tool or resource the server does not expose is worse than
-    no hint: the agent spends a turn discovering the surface is absent.
+    1. `repair.tool` is the machine-readable field an agent actually dispatches on, so it is
+       validated strictly — no exemptions.
+    2. A token inside a call phrase ("retry X") is a callable reference even when it spells
+       an error code, so the code-name exemption does not reach it.
+    3. Remaining bare mentions may be error codes.
     """
     tool_names = {t["name"] for t in wire["tools"]}
     resource_uris = {r["uri"] for r in wire["resources"]}
+    codes = _error_code_tokens()
     problems = []
-    for code, repair in errors._REPAIR_BY_CODE.items():
+    for code, repair in table.items():
         blob = repr(repair)
-        for named in set(re.findall(r"kimi_[a-z_]+", blob)) - _KNOWN_NON_TOOL_TOKENS:
-            if named not in tool_names:
-                problems.append(f"{code} -> {named} (not a tool)")
+        # (1) the structured field
+        machine_tool = repair[1] if isinstance(repair, tuple) and len(repair) > 1 else None
+        if machine_tool is not None and machine_tool not in tool_names:
+            problems.append(f"{code} -> repair.tool={machine_tool} (not a tool)")
+        # (2) call phrases bind tighter than the code-name exemption
+        called = {m.lower() for m in _CALL_PHRASE.findall(blob)}
+        for named in called - tool_names:
+            problems.append(f"{code} -> '{named}' used as a callable (not a tool)")
+        # (3) bare mentions: a tool, or a published error code
+        for named in set(re.findall(r"kimi_[a-z_]+", blob)) - called - codes - tool_names:
+            problems.append(f"{code} -> {named} (neither a tool nor an error code)")
         for uri in set(re.findall(r"kimi://[a-z-]+", blob)) - resource_uris:
             problems.append(f"{code} -> {uri} (not a resource)")
+    return problems
+
+
+def test_every_repair_hint_names_a_real_callable_surface(wire: dict):
+    """The generalized guard. `transfer_unsupported` told agents to "retry kimi_transfer"."""
+    problems = _repair_hint_problems(wire, errors._REPAIR_BY_CODE)
     assert not problems, "repair hints name surfaces that do not exist: " + "; ".join(problems)
 
 
-def test_repair_hint_guard_catches_a_planted_bad_reference(wire: dict, monkeypatch):
-    """Negative control: a clean result must mean the check can fail."""
-    tool_names = {t["name"] for t in wire["tools"]}
-    assert "kimi_transfer" not in tool_names
-    planted = {"bogus_code": ("inspect_and_retry", None, False, "retry kimi_transfer")}
-    monkeypatch.setattr(errors, "_REPAIR_BY_CODE", planted)
-    with pytest.raises(AssertionError, match="kimi_transfer"):
-        test_every_repair_hint_names_a_real_callable_surface(wire)
+@pytest.mark.parametrize(
+    ("planted", "expect"),
+    [
+        # The original defect: a tool that does not exist, outside any exemption.
+        (("inspect_and_retry", None, False, "retry kimi_transfer"), "kimi_transfer"),
+        # The hole Codex found: an ERROR CODE used as a callable. A blanket token exemption
+        # passed this; the call-phrase rule catches it.
+        (("inspect_and_retry", None, False, "retry kimi_rate_limited"), "kimi_rate_limited"),
+        (("inspect_and_retry", None, False, "call kimi_not_found first"), "kimi_not_found"),
+        # A bad structured repair.tool, which no prose rule would see at all.
+        (("inspect_and_retry", "kimi_nonexistent", False, "do a thing"), "kimi_nonexistent"),
+        # A resource that does not exist.
+        (("list_resources", None, False, "read kimi://nope"), "kimi://nope"),
+    ],
+    ids=[
+        "missing-tool",
+        "code-as-callable",
+        "code-as-callable-2",
+        "bad-repair-tool",
+        "bad-resource",
+    ],
+)
+def test_repair_hint_guard_catches_planted_defects(wire: dict, planted, expect):
+    """Negative controls: a clean result must mean each of the three checks can fail."""
+    problems = _repair_hint_problems(wire, {"planted_code": planted})
+    assert any(expect in p for p in problems), f"guard missed a planted {expect!r}; got {problems}"

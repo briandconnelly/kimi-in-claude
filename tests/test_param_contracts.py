@@ -11,6 +11,7 @@ needs on a first call.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import ClassVar
 
@@ -102,23 +103,30 @@ class TestAuditTwoCompaction:
     bytes respectively).
 
     `isolation` WAS on that list (+88 bytes) and came off it on 2026-08-13. The original
-    measurement was sound for the summary it tested — one that kept the whole description
-    and only appended the pointer. A later audit re-cut it against the *content* instead:
-    with AGENTS.md-always-loads, the skill-name egress path, and `extra_skill_dirs` moved to
-    the resource, the summary is 253 chars against 295, and registering now SAVES 296 bytes
-    across its 8 tools. Re-measured, not assumed.
+    measurement was sound for the summary it tested — one that kept the whole description and
+    only appended the pointer. A later audit re-cut it against the *content* instead: with
+    AGENTS.md-always-loads, the skill-name egress path, and `extra_skill_dirs` moved to the
+    resource, the summary is 225 chars against 295, and the measured `tools/list` delta for
+    registering it was 600 bytes (83,466 -> 82,866, isolation-only). Re-measured, not assumed.
 
     The lesson generalizes, and `test_high_fanout_parameters_are_registered` encodes it:
     "already terse" is a claim about a specific candidate summary, not a permanent property
     of a parameter."""
 
-    # The inline description each summary replaces, measured on the wire at schema-56
-    # (isolation: measured 2026-08-13 at schema-2).
-    PREVIOUS_INLINE: ClassVar[dict[str, int]] = {
-        "idempotency_key": 545,
-        "extra_context": 342,
-        "isolation": 295,
-    }
+    # What registration BUYS, measured against current state only: inline you ship `summary`;
+    # without it you would ship `full`. Deliberately not a historical delta — the previous
+    # formulation stored per-parameter "previous inline" character counts that went stale the
+    # moment a summary was retuned (a Codex review caught this class citing 253/296 numbers
+    # left behind by an abandoned draft). Nothing here can go stale: both sides are read live.
+    #
+    # Bytes, not characters: these strings carry em-dashes, so one character is three UTF-8
+    # bytes on the wire, and character arithmetic understates the saving.
+    MIN_REGISTRATION_SAVING_BYTES: ClassVar[int] = 500
+
+    @staticmethod
+    def _serialized_bytes(text: str) -> int:
+        """Bytes this description costs in one tool's inputSchema, as JSON on the wire."""
+        return len(json.dumps(text, ensure_ascii=False).encode("utf-8"))
 
     def test_extra_context_is_registered(self):
         assert "extra_context" in param_contracts.PARAMETER_CONTRACTS
@@ -131,31 +139,23 @@ class TestAuditTwoCompaction:
     def test_isolation_registration_actually_shrank_the_wire(self):
         """The claim that reversed the prior decision, kept checkable.
 
-        A summary that merely appends the pointer would fail this, which is exactly the
-        case the 2026-07-26 measurement rejected."""
+        A summary that merely appended the pointer to the full text would fail this — the
+        case the 2026-07-26 measurement correctly rejected."""
         c = param_contracts.PARAMETER_CONTRACTS["isolation"]
-        assert len(c.summary) < self.PREVIOUS_INLINE["isolation"]
+        assert self._serialized_bytes(c.summary) < self._serialized_bytes(c.full)
 
-    # A registration must pay for itself in BYTES ON THE WIRE. This was a 25%-shorter rule,
-    # which is a proxy for that and gets the wrong answer when the two factors diverge:
-    # `isolation` starts short (295 chars) but rides 8 tools, so a 24% cut is still 560
-    # bytes, while a 30% cut on a single-tool parameter would be worth ~90. Measured
-    # 2026-08-13: idempotency_key 1542 B, extra_context 825 B, isolation 560 B.
-    MIN_MEASURED_SAVING_BYTES: ClassVar[int] = 500
-
-    @pytest.mark.parametrize("name", ["idempotency_key", "extra_context", "isolation"])
+    @pytest.mark.parametrize("name", sorted(param_contracts.PARAMETER_CONTRACTS))
     def test_registration_pays_for_itself_in_wire_bytes(self, name):
-        summary = param_contracts.PARAMETER_CONTRACTS[name].summary
-        previous = self.PREVIOUS_INLINE[name]
+        c = param_contracts.PARAMETER_CONTRACTS[name]
         fanout = _wire_parameter_costs()[name][0]
-        saved = (previous - len(summary)) * fanout
-        assert saved >= self.MIN_MEASURED_SAVING_BYTES, (
-            f"{name}: {previous} -> {len(summary)} chars across {fanout} tools saves "
-            f"{saved} B, under the {self.MIN_MEASURED_SAVING_BYTES} B floor — this "
-            "registration costs more indirection than it buys"
+        saved = (self._serialized_bytes(c.full) - self._serialized_bytes(c.summary)) * fanout
+        assert saved >= self.MIN_REGISTRATION_SAVING_BYTES, (
+            f"{name}: shipping the summary instead of the full text across {fanout} tools "
+            f"saves {saved} B, under the {self.MIN_REGISTRATION_SAVING_BYTES} B floor — "
+            "this registration costs more indirection than it buys"
         )
 
-    @pytest.mark.parametrize("name", ["idempotency_key", "extra_context"])
+    @pytest.mark.parametrize("name", sorted(param_contracts.PARAMETER_CONTRACTS))
     def test_summary_is_shorter_than_its_full_text(self, name):
         c = param_contracts.PARAMETER_CONTRACTS[name]
         assert len(c.summary) < len(c.full)
@@ -195,8 +195,14 @@ _FANOUT_BUDGET_BYTES = 1_500
 # 180 chars; the shortest summary that still states "absolute", the cwd fallback, and
 # meta.workspace_warning came to 178 chars, so registering it saved 26 bytes and bought an
 # indirection. Re-measure before adding an entry here; "it looked terse" is not evidence.
-_FANOUT_EXEMPT: dict[str, str] = {
-    "workspace_root": "measured 2026-08-13: registering saves 26 B (178 vs 180 chars)",
+# Each exemption PINS the cost it was granted at. An exemption keyed only by name would
+# survive its own justification: the description could grow without bound and stay exempt,
+# which is the exact stale-exemption regression this block claims to prevent (Codex review).
+# Exceeding the ceiling fails and forces a re-measurement, not a silent pass.
+_FANOUT_EXEMPT: dict[str, tuple[int, str]] = {
+    # 13 tools x 180 chars = 2431 B. The shortest summary still stating "absolute", the cwd
+    # fallback, and meta.workspace_warning came to 178 chars, so registering saved 26 B.
+    "workspace_root": (2600, "measured 2026-08-13: registering saves 26 B (178 vs 180 chars)"),
 }
 
 
@@ -252,15 +258,24 @@ def test_fanout_measurement_sees_a_known_multi_tool_parameter():
     assert chars > 0 and total >= chars
 
 
-def test_fanout_exemptions_are_still_over_budget():
-    """Guard the guard: an exemption that no longer applies is dead weight, and a stale one
-    hides the next regression behind a name nobody rechecks."""
+def test_fanout_exemptions_stay_within_their_pinned_ceiling():
+    """Guard the guard, in both directions.
+
+    An exemption that fell under the budget is dead weight and hides the next regression.
+    An exemption that OUTGREW the cost it was granted at is worse: the measurement that
+    justified it no longer describes the parameter being exempted.
+    """
     costs = _wire_parameter_costs()
-    for name in _FANOUT_EXEMPT:
+    for name, (ceiling, why) in _FANOUT_EXEMPT.items():
         assert name in costs, f"{name} is exempted but no longer on the wire"
-        assert costs[name][2] > _FANOUT_BUDGET_BYTES, (
+        actual = costs[name][2]
+        assert actual > _FANOUT_BUDGET_BYTES, (
             f"{name} is now under the fan-out budget; drop its exemption"
         )
         assert name not in param_contracts.PARAMETER_CONTRACTS, (
             f"{name} is both exempted and registered; remove the exemption"
+        )
+        assert actual <= ceiling, (
+            f"{name} now costs {actual} B, above the {ceiling} B ceiling its exemption was "
+            f"granted at ({why}). Re-measure: a shorter summary may now pay for itself."
         )

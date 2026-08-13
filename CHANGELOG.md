@@ -46,7 +46,22 @@ All notable changes to this project are documented here, following
   `PAID —` / `Data egress:` blocks used everywhere else on this server. The `RateLimit`
   Codex-provenance aside moved to an internal comment: it informs a maintainer, not a caller,
   and it was shipping to clients as part of a schema description.
-- `FINGERPRINT` is `moonbridge/0.1/schema-4`. `RESULT_FORMAT` is unchanged: only the `schemas`
+- Four guards added by the changes above were hardened after an independent Codex review found
+  they overstated what they enforced. `test_status_result_rate_limit_is_structurally_unavailable`
+  asserted only the schema default factory, so `kimi_status()` could return `available` with the
+  test green; it is now a behavioral test across four readiness states. The repair-hint sweep's
+  hand-maintained exclusion list held a phantom (`kimi_failed`, never an `ErrorCode`) and let
+  prose like "retry kimi_rate_limited" pass; exclusions now derive from `ErrorCode`, `repair.tool`
+  is validated with no exemption, and call-phrases bind tighter than the code-name exemption.
+  The registration-saving test did character arithmetic against stale historical constants; it
+  now measures serialized UTF-8 bytes of `full` against `summary`, so no baseline can go stale.
+  Fan-out exemptions pin the byte cost they were granted at, so an exempt parameter cannot grow
+  without forcing a re-measurement. Each guard now has a mutation test proving it fails on its
+  target defect.
+- The `RateLimit` `RULES.` block said to treat "every field and state below" as unobservable,
+  contradicting the preceding sentence that `status: unavailable` is what you always get. It now
+  names that state as the single observable one.
+- `FINGERPRINT` is `moonbridge/0.1/schema-5`. `RESULT_FORMAT` is unchanged: only the `schemas`
   view of the result-format snapshot moved, the `serialized` view is byte-identical, and no
   stored job record can contain a removed code or the never-populated field.
 

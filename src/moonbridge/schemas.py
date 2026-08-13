@@ -68,7 +68,7 @@ _FINGERPRINT_COVERS_DESC = (
 # this and regenerate the fixture in the same commit. It is an acknowledgment guard — it surfaces
 # the drift, it does not mechanically force the integer bump (the snapshot and this string are
 # independently editable).
-FINGERPRINT = "moonbridge/0.1/schema-4"
+FINGERPRINT = "moonbridge/0.1/schema-5"
 
 # The persisted result-format version, stamped into each job record's generic metadata
 # (`extra.result_format`) at spawn so replay can tell a cross-release payload from a corrupt
@@ -529,8 +529,9 @@ class RateLimitWindow(BaseModel):
 class RateLimit(BaseModel):
     """Agent-facing rate-limit quota. On this server it is always `unavailable`.
 
-    RULES. Do not plan spend around this block. Treat every field and state below as a
-    reserved shape, not as behavior you will observe.
+    RULES. Do not plan spend around this block. `status: unavailable` is the only value you
+    will observe; treat every other state, and every quota-detail field below, as a reserved
+    shape rather than behavior to branch on.
 
     Why: kimi exposes no quota-read channel and its provider is user-configured, so there is
     nothing authoritative to report. `kimi_status` returns `unavailable` and `Meta.rate_limit`
