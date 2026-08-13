@@ -93,7 +93,7 @@ def _consult_meta() -> Meta:
                              record, and null "for every non-lifecycle call".
       * `idempotency_replayed` — patched onto an outgoing replay response and "never
                              persisted into a job's result.json".
-      * `rate_limit`       — null on kimi 0.144+; quota no longer rides the exec stream.
+      * `rate_limit`       — null on kimi 0.144+; quota no longer rides the prompt-mode stream.
                              (It is also the one nested model carrying timestamps.)
     Their survival is pinned at the unit level instead, by
     `TestSlimMetaPopulatedOptionals` in tests/test_schemas.py.

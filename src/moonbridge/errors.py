@@ -239,28 +239,9 @@ _REPAIR_BY_CODE: dict[str, tuple[RepairStep, str | None, bool, str]] = {
         True,
         "Wait retry_after_ms before retrying; reduce concurrent kimi calls.",
     ),
-    "transfer_unsupported": (
-        "install_kimi",
-        None,
-        False,
-        "This kimi is too old to import a Claude session. Update kimi to the latest "
-        "version (e.g. `npm install -g @openai/kimi@latest`), then retry kimi_transfer.",
-    ),
-    "transfer_failed": (
-        "inspect_and_retry",
-        None,
-        False,
-        "Kimi could not import this session; inspect the message, confirm the transcript "
-        "is a complete Claude session, and retry.",
-    ),
-    "transfer_incomplete": (
-        "inspect_and_retry",
-        None,
-        False,
-        "Kimi reported the import completed but recorded no thread. Retry kimi_transfer; "
-        "if it persists, open the imported session manually with `kimi resume` (its "
-        "interactive picker).",
-    ),
+    # The three `transfer_*` entries were removed with their codes — see the note in
+    # schemas.ErrorCode. Their prose named `kimi_transfer`, `npm install -g @openai/kimi`,
+    # and `kimi resume`: a tool, a package, and a subcommand that none exist here.
     "job_not_found": (
         "list_jobs",
         "kimi_job_list",
@@ -333,7 +314,6 @@ def make_error(
     limit_bytes: int | None = None,
     actual_bytes: int | None = None,
     candidate_roots: list[str] | None = None,
-    app_server_stderr_tail: str | None = None,
 ) -> ErrorInfo:
     """Build the §6 error envelope for `code`, deriving the symbolic repair from the
     per-code table. `temporary` defaults to the table's value; pass it to override.
@@ -400,7 +380,6 @@ def make_error(
         limit_bytes=limit_bytes,
         actual_bytes=actual_bytes,
         candidate_roots=candidate_roots,
-        app_server_stderr_tail=app_server_stderr_tail,
     )
 
 

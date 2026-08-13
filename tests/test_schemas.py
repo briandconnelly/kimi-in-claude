@@ -992,7 +992,7 @@ def test_async_lifecycle_advertises_activity_without_touching_progress_support()
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "moonbridge/0.1/schema-1"
+    assert FINGERPRINT == "moonbridge/0.1/schema-2"
 
 
 def test_fingerprint_covers_is_a_nonempty_stable_tuple():

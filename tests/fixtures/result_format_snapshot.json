@@ -1701,18 +1701,6 @@
               "default": null,
               "title": "Actual Bytes"
             },
-            "app_server_stderr_tail": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "App Server Stderr Tail"
-            },
             "candidate_roots": {
               "anyOf": [
                 {
@@ -1761,9 +1749,6 @@
                 "invalid_model",
                 "empty_response",
                 "extra_args_rejected",
-                "transfer_unsupported",
-                "transfer_failed",
-                "transfer_incomplete",
                 "kimi_rate_limited",
                 "job_not_found",
                 "job_running",

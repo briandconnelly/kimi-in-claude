@@ -1,4 +1,4 @@
-"""Parse a `kimi exec` outcome into the normalized result envelope.
+"""Parse a `kimi -p` outcome into the normalized result envelope.
 
 The final answer comes from --output-last-message (stable). The JSONL --json
 stream is parsed TOLERANTLY for optional metadata (token usage, session id) only,

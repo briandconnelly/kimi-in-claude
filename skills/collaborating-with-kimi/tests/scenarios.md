@@ -99,6 +99,11 @@ Assertions:
 
 ## S4: Quota snapshot persistence
 
+RETIRED — the quota states this scenario turns on are unreachable. kimi exposes no
+quota-read channel, so `rate_limit.status` is always `unavailable`; the server stopped
+advertising the other states (see CHANGELOG, `FINGERPRINT` schema-2). Kept as the
+historical record of what was scored; do not re-run it against the current surface.
+
 Mode: treatment-only.
 
 Prompt:
@@ -120,7 +125,7 @@ Mode: treatment-only.
 
 Prompt:
 
-> Write field-access pseudocode for these successful results: `kimi_status`, `kimi_transfer`,
+> Write field-access pseudocode for these successful results: `kimi_status`, `kimi_models`,
 > `kimi_delegate_async`, `kimi_job_status`, and a completed `kimi_job_result` whose originating
 > tool was `kimi_review_changes`. Also show the failure branch.
 
@@ -248,7 +253,7 @@ Assertions:
 - States that user-global skills under `$KIMI_CODE_HOME/skills/` load too.
 - States that `--ignore-user-config` does not suppress them, and that no `--cd` choice excludes
   them because they are discovered from outside the workspace.
-- Does not claim the flags confine what Kimi can read: the read-only sandbox bounds writes, not
+- Does not claim the flags confine what Kimi can read: the read-only agent profile bounds writes, not
   reads, so a scratch `--cd` is not a read boundary.
 
 > The two `$KIMI_CODE_HOME/skills/` assertions were added for #358 and are not yet exercised by a
@@ -281,6 +286,11 @@ Assertions:
 
 ## S13: Quota snapshot spend policy
 
+RETIRED — the quota states this scenario turns on are unreachable. kimi exposes no
+quota-read channel, so `rate_limit.status` is always `unavailable`; the server stopped
+advertising the other states (see CHANGELOG, `FINGERPRINT` schema-2). Kept as the
+historical record of what was scored; do not re-run it against the current surface.
+
 Mode: baseline (db37f62) and treatment.
 
 Prompt:
@@ -304,6 +314,11 @@ Assertions:
 - The decision quotes skill text; it does not report the spend policy as unspecified.
 
 ## S14: Spend control blocks the call
+
+RETIRED — the quota states this scenario turns on are unreachable. kimi exposes no
+quota-read channel, so `rate_limit.status` is always `unavailable`; the server stopped
+advertising the other states (see CHANGELOG, `FINGERPRINT` schema-2). Kept as the
+historical record of what was scored; do not re-run it against the current surface.
 
 Mode: treatment only (the `blocked` status postdates the baseline).
 

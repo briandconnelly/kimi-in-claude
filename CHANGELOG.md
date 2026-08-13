@@ -5,6 +5,31 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** the `transfer_unsupported`, `transfer_failed`, and `transfer_incomplete` error
+  codes, and the `app_server_stderr_tail` field on the error envelope. All four were inherited
+  from the Codex plugin this server was ported from: kimi has no session-transfer equivalent, so
+  no handler could emit them, while their repair hints told agents to retry a `kimi_transfer`
+  tool that does not exist (and to install `@openai/kimi`). Restore them only alongside a real
+  `kimi_transfer` tool.
+
+### Changed
+
+- **Breaking:** `kimi_status` no longer advertises a live quota read. Its `rate_limit` block
+  always reports `unavailable` — kimi exposes no quota-read channel — so the description that
+  taught agents to plan spend around `available`/`limited`/`exhausted`/`blocked` described states
+  the server cannot produce. It now states the single reachable state and names
+  `kimi_rate_limited` as the only real throttling signal. The `RateLimit` schema keeps its
+  reserved fields, now documented as reserved.
+- Tool descriptions no longer say `kimi exec` or "read-only sandbox". kimi has no `exec`
+  subcommand and no sandbox; what constrains a read-only run is the generated agent profile.
+  `cli_contract.FORBIDDEN_SURFACE_PHRASES` now owns that ban and
+  `tests/test_surface_honesty.py` enforces it against the built manifest.
+- `FINGERPRINT` is `moonbridge/0.1/schema-2`. `RESULT_FORMAT` is unchanged: only the `schemas`
+  view of the result-format snapshot moved, the `serialized` view is byte-identical, and no
+  stored job record can contain a removed code or the never-populated field.
+
 ### Added
 
 - Codex plugin and marketplace manifests, with Codex installation instructions and a shared,
