@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from kimi_in_claude import cli_contract, kimi, runspace
-from kimi_in_claude._core import worktree
-from kimi_in_claude._core.runtime import CommandRun
-from kimi_in_claude.schemas import Meta
+from moonbridge import cli_contract, kimi, runspace
+from moonbridge._core import worktree
+from moonbridge._core.runtime import CommandRun
+from moonbridge.schemas import Meta
 
 pytestmark = pytest.mark.anyio
 
@@ -79,7 +79,7 @@ def fake_kimi(monkeypatch):
         )
         return CommandRun(stdout, "", 0, 12, False)
 
-    monkeypatch.setattr("kimi_in_claude._core.runtime.run_async", _fake_run_async)
+    monkeypatch.setattr("moonbridge._core.runtime.run_async", _fake_run_async)
     return calls
 
 
@@ -163,7 +163,7 @@ async def test_handshake_dir_never_reaches_a_captured_diff(tmp_path, monkeypatch
         )
         return CommandRun('{"role":"assistant","content":"done"}\n', "", 0, 5, False)
 
-    monkeypatch.setattr("kimi_in_claude._core.runtime.run_async", _writing_run)
+    monkeypatch.setattr("moonbridge._core.runtime.run_async", _writing_run)
     repo = _repo(tmp_path)
     outcome = await runspace.run_isolated(
         "add mul",

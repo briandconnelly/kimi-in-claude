@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast, get_args
 
-from kimi_in_claude import config, kimi, normalize, prompts, runspace
-from kimi_in_claude._core import gitdiff, redaction
-from kimi_in_claude.errors import make_error, serialize_error
-from kimi_in_claude.schemas import (
+from moonbridge import config, kimi, normalize, prompts, runspace
+from moonbridge._core import gitdiff, redaction
+from moonbridge.errors import make_error, serialize_error
+from moonbridge.schemas import (
     CONSULT_OUTPUT_SCHEMA,
     FINDINGS_OUTPUT_SCHEMA,
     ConsultResult,
@@ -38,7 +38,7 @@ from kimi_in_claude.schemas import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from kimi_in_claude._core.gitdiff import DiffResult
+    from moonbridge._core.gitdiff import DiffResult
 
 
 def build_coverage(*, scope: str, diff: DiffResult) -> Coverage:
@@ -469,9 +469,7 @@ async def run_review(
                     limit_bytes=max_bytes,
                     actual_bytes=extra_context_bytes,
                     details=ErrorDetail(field="extra_context"),
-                    repair_alternative=(
-                        "Trim extra_context or raise KIMI_IN_CLAUDE_MAX_INPUT_BYTES."
-                    ),
+                    repair_alternative=("Trim extra_context or raise MOONBRIDGE_MAX_INPUT_BYTES."),
                 ),
                 meta=meta,
             )

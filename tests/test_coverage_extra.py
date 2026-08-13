@@ -6,8 +6,8 @@ import subprocess
 
 import pytest
 
-from kimi_in_claude import config, orchestration, prompts, server
-from kimi_in_claude._core import runtime
+from moonbridge import config, orchestration, prompts, server
+from moonbridge._core import runtime
 
 
 @pytest.fixture(autouse=True)
@@ -17,10 +17,10 @@ def _fake_worktree_lifecycle(monkeypatch, tmp_path_factory):
     behavior is covered against an actual repository in tests/test_runspace.py."""
     from types import SimpleNamespace
 
-    from kimi_in_claude._core import worktree as wt
+    from moonbridge._core import worktree as wt
 
     def _create(repo, *, timeout, on_parent=None):
-        path = tmp_path_factory.mktemp("kic-worktree")
+        path = tmp_path_factory.mktemp("moonbridge-worktree")
         if on_parent is not None:
             on_parent(str(path))
         return SimpleNamespace(path=str(path), baseline_warning=None)
@@ -113,12 +113,12 @@ def test_build_review_prompt_without_context():
 
 # --- config edges ------------------------------------------------------------
 def test_env_int_bad_value_falls_back(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_TIMEOUT_SECONDS", "notanint")
+    clean_env.setenv("MOONBRIDGE_TIMEOUT_SECONDS", "notanint")
     assert config.defaults().timeout_seconds == config.DEFAULT_TIMEOUT_SECONDS
 
 
 def test_worktree_base_override(clean_env, tmp_path):
-    clean_env.setenv("KIMI_IN_CLAUDE_WORKTREE_BASE", str(tmp_path))
+    clean_env.setenv("MOONBRIDGE_WORKTREE_BASE", str(tmp_path))
     assert config.worktree_base() == tmp_path
 
 
@@ -128,7 +128,7 @@ def test_worktree_base_default(clean_env):
 
 def test_supported_versions_partial_token(clean_env):
     # A token without a minor is skipped; falls back to built-in set.
-    clean_env.setenv("KIMI_IN_CLAUDE_SUPPORTED_VERSIONS", "5")
+    clean_env.setenv("MOONBRIDGE_SUPPORTED_VERSIONS", "5")
     assert config.version_supported("0.35.0") is True
 
 
@@ -265,7 +265,7 @@ def test_status_flags_warning(monkeypatch, clean_env):
 
 # --- review: extra branches --------------------------------------------------
 async def test_review_git_unavailable(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude._core import gitdiff
+    from moonbridge._core import gitdiff
 
     def boom(*a, **k):
         raise gitdiff.GitUnavailableError("git not found")
@@ -277,7 +277,7 @@ async def test_review_git_unavailable(monkeypatch, clean_env, tmp_path):
 
 
 async def test_review_generic_git_runtime_error(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude._core import gitdiff
+    from moonbridge._core import gitdiff
 
     def boom(*a, **k):
         raise RuntimeError("git diff timed out after 60s")
@@ -289,7 +289,7 @@ async def test_review_generic_git_runtime_error(monkeypatch, clean_env, tmp_path
 
 
 async def test_review_commit_scope_label(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude._core import gitdiff
+    from moonbridge._core import gitdiff
 
     monkeypatch.setattr(
         gitdiff,
@@ -323,7 +323,7 @@ async def test_review_invalid_workspace(clean_env):
 
 
 async def test_review_placeholder_env(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_review_changes(scope="working_tree", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "unexpanded_env_placeholder"

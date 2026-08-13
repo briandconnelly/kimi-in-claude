@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import json
 
-from kimi_in_claude import cli_contract
-from kimi_in_claude._core import runtime
-from kimi_in_claude.schemas import ModelCatalogResult, ModelInfo
+from moonbridge import cli_contract
+from moonbridge._core import runtime
+from moonbridge.schemas import ModelCatalogResult, ModelInfo
 
 _ADVISORY = (
     "Model aliases configured in your kimi config.toml. `model` takes one of these alias "

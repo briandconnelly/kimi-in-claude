@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from kimi_in_claude import cli_contract
+from moonbridge import cli_contract
 
 
 # --------------------------------------------------------------------------- #

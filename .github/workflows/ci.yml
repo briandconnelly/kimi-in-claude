@@ -39,11 +39,11 @@ jobs:
           # .mcp.json deliberately does NOT pin a released version: this project is not
           # published, so it launches the checkout with `uv run --directory`. Assert that,
           # rather than a PyPI pin that would fail every build. When distribution starts,
-          # this check flips back to `kimi-in-claude==${version}",`.
+          # this check flips back to `moonbridge==${version}",`.
           if grep -Fq "==" .mcp.json; then
             echo ".mcp.json pins a release, but this project is not published" >&2
             exit 1
           fi
-          grep -Fq "kimi-in-claude-mcp" .mcp.json
+          grep -Fq "moonbridge-mcp" .mcp.json
 
           echo "Version ${version} is consistent across pyproject.toml and plugin.json"

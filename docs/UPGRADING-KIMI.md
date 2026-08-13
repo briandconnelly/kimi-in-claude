@@ -57,7 +57,7 @@ Any externally observable change to a category in `FINGERPRINT_COVERS` moves the
 the manifest snapshot must be regenerated in the same commit:
 
 ```sh
-uv run python -m kimi_in_claude.manifest > tests/fixtures/manifest_snapshot.json
+uv run python -m moonbridge.manifest > tests/fixtures/manifest_snapshot.json
 ```
 
 `tests/test_manifest.py` also pins the snapshot's hash; update it alongside.

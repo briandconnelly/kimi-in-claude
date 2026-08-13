@@ -10,7 +10,7 @@ import sys
 import anyio
 import pytest
 
-from kimi_in_claude._core import runtime
+from moonbridge._core import runtime
 
 
 def _py(code: str) -> list[str]:

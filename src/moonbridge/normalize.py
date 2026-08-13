@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 
-from kimi_in_claude import cli_contract
-from kimi_in_claude.schemas import (
+from moonbridge import cli_contract
+from moonbridge.schemas import (
     Finding,
     Usage,
 )

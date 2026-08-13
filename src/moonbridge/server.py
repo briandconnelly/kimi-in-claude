@@ -33,10 +33,10 @@ if TYPE_CHECKING:
     import logging
     from collections.abc import Awaitable, Callable
 
-    from kimi_in_claude._core.jobs import JobStore
+    from moonbridge._core.jobs import JobStore
 
 
-from kimi_in_claude import (
+from moonbridge import (
     __version__,
     cli_contract,
     config,
@@ -48,11 +48,11 @@ from kimi_in_claude import (
     preflight,
     prompts,
 )
-from kimi_in_claude._core import gitdiff, idempotency, redaction, workspace, worktree
-from kimi_in_claude._core.jobs import DiscardOutcome
-from kimi_in_claude.errors import make_error, serialize_error, serialize_error_info
-from kimi_in_claude.kimi_models import read_model_catalog, supported_efforts_for
-from kimi_in_claude.schemas import (
+from moonbridge._core import gitdiff, idempotency, redaction, workspace, worktree
+from moonbridge._core.jobs import DiscardOutcome
+from moonbridge.errors import make_error, serialize_error, serialize_error_info
+from moonbridge.kimi_models import read_model_catalog, supported_efforts_for
+from moonbridge.schemas import (
     CAPABILITIES_RESULT_SCHEMA,
     CAPABILITIES_SCHEMA,
     CONSULT_RESULT_SCHEMA,
@@ -240,7 +240,7 @@ _FREE_WRITE = {
     "idempotentHint": False,
 }
 
-mcp = FastMCP(name="kimi-in-claude", instructions=CAPABILITY_SUMMARY, version=__version__)
+mcp = FastMCP(name="moonbridge", instructions=CAPABILITY_SUMMARY, version=__version__)
 
 # F5 (audit): this server registers no MCP prompts, but the low-level SDK advertises
 # the prompts capability whenever a ListPromptsRequest handler exists (FastMCP always
@@ -726,7 +726,7 @@ ModelParam = Annotated[
 ]
 # Bounds on the reasoning-effort VALUE, enforced at the MCP boundary (like
 # IdempotencyKeyParam's length bounds) and re-checked pre-spend on the RESOLVED value
-# (_reasoning_effort_shape_error below), which the KIMI_IN_CLAUDE_REASONING_EFFORT
+# (_reasoning_effort_shape_error below), which the MOONBRIDGE_REASONING_EFFORT
 # env default reaches without ever crossing the MCP boundary. config owns the bounds
 # (config.reasoning_effort_shape_error) so the two enforcement points cannot drift.
 _REASONING_EFFORT_MAX_LENGTH = config.REASONING_EFFORT_MAX_LENGTH
@@ -884,7 +884,7 @@ ModelDryRunParam = Annotated[
     str | None,
     Field(
         description="The Kimi model slug the previewed paid call would use; defaults "
-        "to the server default (KIMI_IN_CLAUDE_MODEL) when unset, so the preview "
+        "to the server default (MOONBRIDGE_MODEL) when unset, so the preview "
         "mirrors the paid call's resolution. This dry run does not call Kimi or "
         "validate the model."
     ),
@@ -896,7 +896,7 @@ ReasoningEffortDryRunParam = Annotated[
         pattern=_REASONING_EFFORT_VALUE_PATTERN,
         description="The reasoning effort the previewed paid call would send (as a "
         "`model_reasoning_effort` config override); defaults to the server default "
-        "(KIMI_IN_CLAUDE_REASONING_EFFORT) when unset, so the preview mirrors the "
+        "(MOONBRIDGE_REASONING_EFFORT) when unset, so the preview mirrors the "
         "paid call's resolution. This dry run does not call Kimi or validate the "
         "value beyond the paid params' shape bounds (no control or surrogate "
         f"characters, ≤{_REASONING_EFFORT_MAX_LENGTH} chars).",
@@ -1078,7 +1078,7 @@ def _placeholder_error(meta: Meta) -> dict | None:
 
 
 def _extra_args_error(meta: Meta) -> dict | None:
-    """Preflight the KIMI_IN_CLAUDE_EXTRA_ARGS knob before any spend (#231).
+    """Preflight the MOONBRIDGE_EXTRA_ARGS knob before any spend (#231).
 
     Mirrors _placeholder_error: if the knob is set but fails to parse/allowlist,
     return a structured extra_args_rejected envelope so the caller never pays for a
@@ -1143,7 +1143,7 @@ def _reasoning_effort_shape_error(
     """Pre-spend guard on the RESOLVED reasoning effort (#309, Kimi re-review).
 
     The MCP boundary already enforces the shape bounds on the per-call parameter, but
-    the KIMI_IN_CLAUDE_REASONING_EFFORT env default (and a direct in-process call)
+    the MOONBRIDGE_REASONING_EFFORT env default (and a direct in-process call)
     never crosses that boundary — without this check an argv-hostile operator default
     would reach Popen (a NUL raises ValueError; an argv-scale value surfaces as a
     misleading kimi_not_found). Zero spend: the run is refused before any subprocess.
@@ -1239,7 +1239,7 @@ def _internal_error_result(
                 f"{tool_name} failed unexpectedly: {redaction.exc_summary(exc)}"[:300],
                 repair_alternative=(
                     "Server-side error; retry. If it persists, run kimi_status and inspect "
-                    "the server's stderr log (set KIMI_IN_CLAUDE_LOG_LEVEL=DEBUG for detail)."
+                    "the server's stderr log (set MOONBRIDGE_LOG_LEVEL=DEBUG for detail)."
                 ),
             ),
             meta=meta,
@@ -1267,7 +1267,7 @@ def _guard(
                 return await fn(*args, **kwargs)
             except Exception as exc:
                 elapsed_ms = int((time.monotonic() - start) * 1000)
-                obs.get_logger("kimi_in_claude.server").error(
+                obs.get_logger("moonbridge.server").error(
                     "tool %s raised %s after %dms",
                     name,
                     type(exc).__name__,
@@ -1288,7 +1288,7 @@ def _guard(
 # tier could not be mirrored anywhere else without hand-copying the list. Both surfaces —
 # ToolCapability.stability and each tool's namespaced _meta — now read this map, and a test
 # asserts they agree.
-_STABILITY_META_KEY = "dev.bconnelly.kimi-in-claude/stability"
+_STABILITY_META_KEY = "dev.bconnelly.moonbridge/stability"
 _SERVER_STABILITY = "alpha"
 
 # Tools more experimental than the server-wide tier. Anything absent inherits _SERVER_STABILITY.
@@ -1355,7 +1355,7 @@ def kimi_status() -> dict:
     if missing:
         flags_warning = (
             f"`kimi exec --help` did not list expected flags: {', '.join(missing)}. "
-            "The CLI contract may have drifted; an update to kimi-in-claude may be needed."
+            "The CLI contract may have drifted; an update to moonbridge may be needed."
         )
 
     ready = bool(found and authenticated)
@@ -1433,7 +1433,7 @@ _RUNTIME_ERRORS: tuple[ErrorCode, ...] = (
     "cli_contract_changed",
     # Reachable on every Kimi-running tool, from two paths (#309, #332): the backend
     # rejected the sent effort, OR the local pre-spend guard refused a hostile resolved
-    # value (the per-call reasoning_effort or the KIMI_IN_CLAUDE_REASONING_EFFORT default)
+    # value (the per-call reasoning_effort or the MOONBRIDGE_REASONING_EFFORT default)
     # before any subprocess. The two paths carry different machine repairs.
     "invalid_reasoning_effort",
     "extra_args_rejected",
@@ -1556,7 +1556,7 @@ _TOOL_ERROR_CODES: dict[str, list[ErrorCode]] = {
     "kimi_capabilities": [],
     # Both dry runs advertise invalid_reasoning_effort even though they never call
     # Kimi: the pre-spend shape guard on the RESOLVED effort runs there too, so an
-    # invalid KIMI_IN_CLAUDE_REASONING_EFFORT default surfaces the code with no
+    # invalid MOONBRIDGE_REASONING_EFFORT default surfaces the code with no
     # subprocess involved.
     "kimi_dry_run": _err_codes(
         _WORKSPACE_ERRORS,
@@ -1659,7 +1659,7 @@ def kimi_capabilities(
     document (a contract doc, not a JSON Schema) — a tool-reachable fallback to the
     kimi:// resources for resource-blind clients. It works in any detail mode."""
     caps = CapabilitiesResult(
-        name="kimi-in-claude",
+        name="moonbridge",
         version=__version__,
         transport="stdio",
         stability=_SERVER_STABILITY,
@@ -2080,7 +2080,7 @@ def _model_catalog_payload() -> dict:
     return read_model_catalog().model_dump(mode="json", exclude_none=True)
 
 
-_TRIAGE_META_KEY = "dev.bconnelly.kimi-in-claude/triage"
+_TRIAGE_META_KEY = "dev.bconnelly.moonbridge/triage"
 
 
 def _static_triage(payload: dict) -> dict[str, dict]:
@@ -2979,7 +2979,7 @@ async def kimi_delegate_async(
 
 
 def _worker_cmd(job_dir: object) -> list[str]:
-    return [sys.executable, "-m", "kimi_in_claude._worker", str(job_dir)]
+    return [sys.executable, "-m", "moonbridge._worker", str(job_dir)]
 
 
 # Fields of a run `spec` that do NOT belong in the idempotency argument hash: pure
@@ -3043,7 +3043,7 @@ def _spawn_failure_envelope(exc: Exception, meta: Meta) -> dict:
                 "internal_error",
                 f"failed to start background job: {redaction.exc_summary(exc)}"[:300],
                 repair_alternative=(
-                    "Check the job state-dir permissions (KIMI_IN_CLAUDE_STATE_DIR) and retry."
+                    "Check the job state-dir permissions (MOONBRIDGE_STATE_DIR) and retry."
                 ),
             ),
             meta=meta,
@@ -4612,7 +4612,7 @@ def _make_signal_handler(log: logging.Logger, previous: Any) -> Callable[[int, o
 
     def handler(signum: int, frame: object) -> None:
         name = signal.Signals(signum).name
-        log.info("kimi-in-claude %s: received %s, shutting down", __version__, name)
+        log.info("moonbridge %s: received %s, shutting down", __version__, name)
         if callable(previous):
             previous(signum, frame)  # e.g. default SIGINT handler raises KeyboardInterrupt
         else:  # SIG_DFL: restore and re-raise so the OS default (terminate) still happens
@@ -4644,15 +4644,15 @@ def _enforce_posix_platform(os_name: str | None = None) -> None:
     child processes. Rather than ship a half-safe server, fail loudly before the
     transport loop starts. WSL2 reports ``os.name == "posix"`` and is unaffected.
 
-    ``KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM=1`` downgrades the hard exit to a
+    ``MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM=1`` downgrades the hard exit to a
     stderr warning for operators who knowingly accept consult-only, unsupported use
     (#232)."""
     platform_name = os.name if os_name is None else os_name
     if platform_name == "posix":
         return
-    if os.environ.get("KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM") == "1":
+    if os.environ.get("MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM") == "1":
         sys.stderr.write(
-            "WARNING: KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM=1 set on a non-POSIX "
+            "WARNING: MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM=1 set on a non-POSIX "
             f"platform (os.name={platform_name}); the async-job safety layer (fcntl locks, process "
             "groups, signal handlers) cannot hold. Consult-only, unsupported; do not "
             "use delegate/review against untrusted work.\n"
@@ -4660,9 +4660,9 @@ def _enforce_posix_platform(os_name: str | None = None) -> None:
         return
     wsl2_hint = "On Windows, run it under WSL2. " if platform_name == "nt" else ""
     sys.stderr.write(
-        f"kimi-in-claude requires a POSIX platform (macOS or Linux); got os.name={platform_name}. "
+        f"moonbridge requires a POSIX platform (macOS or Linux); got os.name={platform_name}. "
         f"{wsl2_hint}Set "
-        "KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM=1 to override "
+        "MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM=1 to override "
         "(consult-only, unsupported).\n"
     )
     raise SystemExit(1)
@@ -4679,24 +4679,24 @@ def main() -> None:
     _enforce_posix_platform()
     log = obs.configure()
     _install_signal_logging(log)
-    log.info("kimi-in-claude %s starting (stdio)", __version__)
+    log.info("moonbridge %s starting (stdio)", __version__)
     try:
         mcp.run()
     except (KeyboardInterrupt, EOFError, BrokenPipeError) as exc:
         # Client closed the pipe or interrupted us — an ordinary disconnect, not a crash.
-        log.info("kimi-in-claude %s: clean shutdown (%s)", __version__, type(exc).__name__)
+        log.info("moonbridge %s: clean shutdown (%s)", __version__, type(exc).__name__)
     except SystemExit:
         raise  # honor an explicit exit code (e.g. from our own signal path)
     except Exception as exc:
         log.exception(
-            "kimi-in-claude %s crashed out of the stdio transport loop; the MCP server "
+            "moonbridge %s crashed out of the stdio transport loop; the MCP server "
             "has stopped and will not recover on its own. Reconnect with the /mcp command "
             "(or restart the client).",
             __version__,
         )
         raise SystemExit(1) from exc
     else:
-        log.info("kimi-in-claude %s: stdio transport closed, shutting down", __version__)
+        log.info("moonbridge %s: stdio transport closed, shutting down", __version__)
 
 
 if __name__ == "__main__":  # pragma: no cover

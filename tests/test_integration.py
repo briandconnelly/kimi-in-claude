@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from kimi_in_claude import cli_contract, kimi, server
+from moonbridge import cli_contract, kimi, server
 
 pytestmark = pytest.mark.integration
 
@@ -98,7 +98,7 @@ async def test_delegate_async_live(tmp_path, monkeypatch):
     import time
 
     # keep job state out of the user's real cache dir
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "jobs"))
 
     def g(*a):
         subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)
@@ -177,7 +177,7 @@ def test_read_only_agent_blocks_a_write_live(tmp_path):
     """
     import anyio
 
-    from kimi_in_claude import kimi
+    from moonbridge import kimi
 
     victim = tmp_path / "escaped.txt"
     workdir = tmp_path / "work"
@@ -203,7 +203,7 @@ def test_model_catalog_live_never_exposes_the_provider_key():
     """`kimi provider list --json` carries apiKey in plaintext on a real machine."""
     import json
 
-    from kimi_in_claude import kimi_models
+    from moonbridge import kimi_models
 
     catalog = kimi_models.read_model_catalog()
     if catalog.source == "none":

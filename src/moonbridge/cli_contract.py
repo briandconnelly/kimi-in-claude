@@ -107,7 +107,7 @@ HELP_CACHE_TTL_SECONDS = 300
 # Bash is deliberately absent: it can write, so a "read-only" agent holding Bash is not
 # read-only. Verified on 0.35.0 that omitting it removes it from the model's tool set.
 READ_ONLY_AGENT_TOOLS = ("Read", "Glob", "Grep")
-READ_ONLY_AGENT_NAME = "kimi-in-claude-readonly"
+READ_ONLY_AGENT_NAME = "moonbridge-readonly"
 
 # WHAT "READ-ONLY" DOES AND DOES NOT MEAN — verified, not assumed.
 #
@@ -129,7 +129,7 @@ READ_ONLY_CONFIDENTIALITY_LIMIT = (
 
 # --- The file handshake ----------------------------------------------------------------
 # Written inside the worktree, under a single dot-directory kept out of any captured diff.
-HANDSHAKE_DIR_NAME = ".kimi-in-claude"
+HANDSHAKE_DIR_NAME = ".moonbridge"
 PROMPT_FILE_NAME = "prompt.md"
 # Only the propose tier can produce this: a read-only agent has no Write tool.
 ANSWER_FILE_NAME = "answer.md"
@@ -175,7 +175,7 @@ REMOTE_PLUGIN_FEATURE = ""
 
 # --- Versions --------------------------------------------------------------------------
 SUPPORTED_VERSIONS = frozenset({(0, 35)})
-SUPPORTED_VERSIONS_ENV = "KIMI_IN_CLAUDE_SUPPORTED_VERSIONS"
+SUPPORTED_VERSIONS_ENV = "MOONBRIDGE_SUPPORTED_VERSIONS"
 
 # --- Models ----------------------------------------------------------------------------
 # `-m` takes an alias defined in config.toml, so there is no meaningful bundled slug list;

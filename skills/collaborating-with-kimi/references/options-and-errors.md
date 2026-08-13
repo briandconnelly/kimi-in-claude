@@ -6,7 +6,7 @@ explains invariants without duplicating their full schemas.
 ## Optional controls
 
 - Default to omitting `model` and `reasoning_effort`, preserving the resolution chain (per-call
-  param > `KIMI_IN_CLAUDE_*` env default > Kimi's own resolution). Override only for an explicit
+  param > `MOONBRIDGE_*` env default > Kimi's own resolution). Override only for an explicit
   user requirement or a constraint you state alongside the override; when uncertain, omit.
 - Effort values are backend-defined per model: interpret them within the selected model, and do
   not infer cost, latency, or quality from an effort label. When an effort override is already
@@ -42,6 +42,6 @@ Do not assume the advertised error-code list is exhaustive. Do not echo rejected
 error; supplied values may contain secrets. On a setup failure, call free `kimi_status` again and
 require both readiness conditions before another paid attempt.
 
-`KIMI_IN_CLAUDE_EXTRA_ARGS` is operator configuration applied to paid calls. `kimi_status` reports
+`MOONBRIDGE_EXTRA_ARGS` is operator configuration applied to paid calls. `kimi_status` reports
 whether it is configured and valid without exposing its values. If `extra_args_valid` is false, no
 paid call can pass preflight even when `ready` is true.

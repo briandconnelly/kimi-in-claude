@@ -39,7 +39,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, TypeVar
 
-from kimi_in_claude._core import streamcap
+from moonbridge._core import streamcap
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

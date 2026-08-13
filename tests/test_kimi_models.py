@@ -15,8 +15,8 @@ import json
 
 import pytest
 
-from kimi_in_claude import kimi_models
-from kimi_in_claude._core.runtime import BINARY_NOT_FOUND, CommandRun
+from moonbridge import kimi_models
+from moonbridge._core.runtime import BINARY_NOT_FOUND, CommandRun
 
 # The real SHAPE of `kimi provider list --json`, with invented values throughout: a real
 # provider id, model alias, or base URL names private infrastructure. Only the apiKey is a
@@ -56,7 +56,7 @@ def probe(monkeypatch):
             5,
             timed_out,
         )
-        monkeypatch.setattr("kimi_in_claude._core.runtime.run_sync_capture", lambda *a, **k: run)
+        monkeypatch.setattr("moonbridge._core.runtime.run_sync_capture", lambda *a, **k: run)
 
     return _set
 

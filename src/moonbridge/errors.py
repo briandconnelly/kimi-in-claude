@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kimi_in_claude.schemas import (
+from moonbridge.schemas import (
     ErrorCode,
     ErrorDetail,
     ErrorInfo,
@@ -197,7 +197,7 @@ _REPAIR_BY_CODE: dict[str, tuple[RepairStep, str | None, bool, str]] = {
         "update_plugin",
         None,
         False,
-        "Update kimi-in-claude (the installed kimi CLI changed its contract);"
+        "Update moonbridge (the installed kimi CLI changed its contract);"
         " or pin kimi to a supported version, and run kimi_status to check the version.",
     ),
     "invalid_reasoning_effort": (
@@ -207,7 +207,7 @@ _REPAIR_BY_CODE: dict[str, tuple[RepairStep, str | None, bool, str]] = {
         "The Kimi backend rejected the requested reasoning_effort for this model/account. "
         "Pass an effort the model supports (kimi_models lists advisory per-model "
         "supported_reasoning_efforts), pick a model/effort pair explicitly, or omit "
-        "reasoning_effort (and unset KIMI_IN_CLAUDE_REASONING_EFFORT) to let Kimi resolve it.",
+        "reasoning_effort (and unset MOONBRIDGE_REASONING_EFFORT) to let Kimi resolve it.",
     ),
     "empty_response": (
         "retry_then_report",
@@ -230,7 +230,7 @@ _REPAIR_BY_CODE: dict[str, tuple[RepairStep, str | None, bool, str]] = {
         "correct_config",
         None,
         False,
-        "kimi rejected an entry in KIMI_IN_CLAUDE_EXTRA_ARGS (operator config, not a "
+        "kimi rejected an entry in MOONBRIDGE_EXTRA_ARGS (operator config, not a "
         "plugin drift). Fix or remove the offending option/config key/profile and rerun.",
     ),
     "kimi_rate_limited": (
@@ -282,7 +282,7 @@ _REPAIR_BY_CODE: dict[str, tuple[RepairStep, str | None, bool, str]] = {
         # No "restore the writing release" promise: the record survives a consume
         # attempt (#306), but TTL reaping or count-cap eviction can still remove it
         # before a restore is attempted.
-        "This stored result was written by a different kimi-in-claude release and cannot "
+        "This stored result was written by a different moonbridge release and cannot "
         "be read by the one now running; retrying cannot succeed. Start a new job under "
         "the current release, with a new (or no) idempotency_key — a reused old key can "
         "replay this same unreadable record while it still exists.",

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from kimi_in_claude._core.jsoncache import read_bounded_json
+from moonbridge._core.jsoncache import read_bounded_json
 
 
 def test_reads_valid_json(tmp_path: Path):

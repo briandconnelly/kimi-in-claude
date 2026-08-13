@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from kimi_in_claude._core import streamcap
+from moonbridge._core import streamcap
 
 
 def test_iter_bounded_lines_basic():

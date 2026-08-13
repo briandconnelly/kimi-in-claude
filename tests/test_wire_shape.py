@@ -12,8 +12,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from kimi_in_claude import wire_shape_snapshot
-from kimi_in_claude.schemas import RESULT_META_SCHEMA, Meta
+from moonbridge import wire_shape_snapshot
+from moonbridge.schemas import RESULT_META_SCHEMA, Meta
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "wire_shape_snapshot.json"
 
@@ -21,7 +21,7 @@ _REGEN = (
     "the DELIVERED envelope shape changed — review the snapshot diff to see exactly "
     "which keys a client gains or loses, then in the SAME commit bump FINGERPRINT "
     "(schemas.py) if the agent-visible surface moved, and regenerate the fixture "
-    "(`uv run python -m kimi_in_claude.wire_shape_snapshot > "
+    "(`uv run python -m moonbridge.wire_shape_snapshot > "
     "tests/fixtures/wire_shape_snapshot.json`). RESULT_FORMAT is a SEPARATE decision: "
     "bump it only if the PERSISTED result.json shape moved (see result_format_snapshot)."
 )

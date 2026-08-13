@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from kimi_in_claude import config, obs
+from moonbridge import config, obs
 
 
 def _reset():
@@ -28,24 +28,24 @@ def test_configure_uses_stderr_never_stdout(clean_env):
 
 
 def test_configure_respects_log_level(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_LOG_LEVEL", "DEBUG")
+    clean_env.setenv("MOONBRIDGE_LOG_LEVEL", "DEBUG")
     _reset()
     logger = obs.configure(force=True)
     assert logger.level == logging.DEBUG
 
 
 def test_invalid_log_level_falls_back(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_LOG_LEVEL", "bogus")
+    clean_env.setenv("MOONBRIDGE_LOG_LEVEL", "bogus")
     assert config.log_level() == "WARNING"
 
 
 def test_log_file_handler_writes(clean_env, tmp_path):
     path = tmp_path / "server.log"
-    clean_env.setenv("KIMI_IN_CLAUDE_LOG_FILE", str(path))
-    clean_env.setenv("KIMI_IN_CLAUDE_LOG_LEVEL", "INFO")
+    clean_env.setenv("MOONBRIDGE_LOG_FILE", str(path))
+    clean_env.setenv("MOONBRIDGE_LOG_LEVEL", "INFO")
     _reset()
     logger = obs.configure(force=True)
-    obs.get_logger("kimi_in_claude.test").info("hello-disk")
+    obs.get_logger("moonbridge.test").info("hello-disk")
     for h in logger.handlers:
         h.flush()
     assert path.exists()
@@ -72,7 +72,7 @@ def test_force_reconfigure_replaces_handlers(clean_env):
 
 def test_unopenable_log_file_falls_back_to_stderr(clean_env, tmp_path):
     # A directory path cannot be opened as a file → OSError; we keep stderr only.
-    clean_env.setenv("KIMI_IN_CLAUDE_LOG_FILE", str(tmp_path))
+    clean_env.setenv("MOONBRIDGE_LOG_FILE", str(tmp_path))
     _reset()
     logger = obs.configure(force=True)
     assert all(not isinstance(h, logging.FileHandler) for h in logger.handlers)
@@ -81,7 +81,7 @@ def test_unopenable_log_file_falls_back_to_stderr(clean_env, tmp_path):
 
 def test_get_logger_namespaced(clean_env):
     _reset()
-    log = obs.get_logger("kimi_in_claude.server")
-    assert log.name == "kimi_in_claude.server"
+    log = obs.get_logger("moonbridge.server")
+    assert log.name == "moonbridge.server"
     # inherits the configured root handlers via propagation
     assert logging.getLogger(obs.ROOT_LOGGER_NAME).handlers

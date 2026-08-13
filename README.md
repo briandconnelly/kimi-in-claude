@@ -1,4 +1,4 @@
-# kimi-in-claude
+# Moonbridge
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -7,11 +7,12 @@ review, and delegated coding tasks — through an MCP server that drives the `ki
 
 **Contents:** [Why](#why) · [What this does and does not protect](#what-this-does-and-does-not-protect) ·
 [Quick start](#quick-start) · [Requirements](#requirements) · [Tools](#tools) ·
-[Configuration](#configuration) · [Local development](#local-development)
+[Configuration](#configuration) · [Local development](#local-development) ·
+[Further reading](#further-reading)
 
 ## Why
 
-A second model from a different vendor is a cheap, high-value check. `kimi-in-claude` lets a Claude
+A second model from a different vendor is a cheap, high-value check. `moonbridge` lets a Claude
 Code or Codex session hand Kimi a question, a diff to review, or a task to implement, and get back
 a structured result you stay in control of.
 
@@ -68,8 +69,8 @@ Install the plugin for your coding agent.
 ### Codex
 
 ```sh
-codex plugin marketplace add briandconnelly/kimi-in-claude
-codex plugin add kimi-in-claude@kimi-in-claude
+codex plugin marketplace add briandconnelly/moonbridge
+codex plugin add moonbridge@moonbridge
 ```
 
 Start a new Codex session so it loads the bundled skill and tools, then ask `Check whether Kimi is
@@ -86,8 +87,8 @@ You can also run `/plugins` inside the Codex CLI to browse, enable, or disable t
 ### Claude Code
 
 ```
-/plugin marketplace add briandconnelly/kimi-in-claude
-/plugin install kimi-in-claude@kimi-in-claude
+/plugin marketplace add briandconnelly/moonbridge
+/plugin install moonbridge@moonbridge
 ```
 
 No clone is needed. The plugin ships [`.mcp.json`](.mcp.json), which installs the server from this
@@ -131,7 +132,7 @@ Two contract details worth knowing:
 
 ## Configuration
 
-Environment variables, all prefixed `KIMI_IN_CLAUDE_`:
+Environment variables, all prefixed `MOONBRIDGE_`:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -142,12 +143,12 @@ Environment variables, all prefixed `KIMI_IN_CLAUDE_`:
 | `MAX_INPUT_BYTES` | 200000 | bound on gathered context |
 | `MAX_DELEGATE_DIFF_BYTES` | 200000 | bound on a returned diff |
 | `JOB_TTL` / `JOB_MAX_SECONDS` / `JOB_MAX_COUNT` | 86400 / 1800 / 50 | background job limits |
-| `STATE_DIR` | `~/.cache/kimi-in-claude/jobs` | job records |
+| `STATE_DIR` | `~/.cache/moonbridge/jobs` | job records |
 | `LOG_LEVEL` / `LOG_FILE` | `WARNING` / unset | logging |
 | `SUPPORTED_VERSIONS` | `0.35` | tested `kimi` minors |
 | `EXTRA_ARGS` | unset | **no safe passthrough exists** — any value is refused, see below |
 
-`KIMI_IN_CLAUDE_EXTRA_ARGS` accepts nothing today, deliberately. kimi exposes no config-override,
+`MOONBRIDGE_EXTRA_ARGS` accepts nothing today, deliberately. kimi exposes no config-override,
 profile, or feature flags, and reuses two short flags for other purposes: `-p` is **prompt** and
 `-c` is **continue**. Passing them through would override the run's real instructions or resume an
 unrelated session, so the allowlist is empty and a configured value fails loudly rather than being
@@ -166,7 +167,7 @@ To install from a checkout, register it as a marketplace in either host:
 
 ```sh
 codex plugin marketplace add <path to this checkout>
-codex plugin add kimi-in-claude@kimi-in-claude
+codex plugin add moonbridge@moonbridge
 ```
 
 In Claude Code, run `/plugin marketplace add <path to this checkout>`, then install as above. Both
@@ -176,7 +177,7 @@ affected by your edits.
 To run the working tree in Codex, register a separate development server:
 
 ```sh
-codex mcp add kimi-in-claude-dev -- uv run --directory <path to this checkout> kimi-in-claude-mcp
+codex mcp add moonbridge-dev -- uv run --directory <path to this checkout> moonbridge-mcp
 ```
 
 In Claude Code, override the server in the consuming project's own `.mcp.json`:
@@ -184,14 +185,29 @@ In Claude Code, override the server in the consuming project's own `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "kimi-in-claude": {
+    "moonbridge": {
       "command": "uv",
-      "args": ["run", "--directory", "<path to this checkout>", "kimi-in-claude-mcp"]
+      "args": ["run", "--directory", "<path to this checkout>", "moonbridge-mcp"]
     }
   }
 }
 ```
 
-`src/kimi_in_claude/_core/` holds CLI-agnostic machinery and must never import its parent package.
+`src/moonbridge/_core/` holds CLI-agnostic machinery and must never import its parent package.
 Everything this server assumes about the `kimi` CLI lives in `cli_contract.py`; the captures it was
 verified against are in `docs/kimi-help/0.35.0/`.
+
+## Further reading
+
+- [Tool reference](docs/REFERENCE.md) — the full caller-facing contract: envelopes, error codes,
+  detail levels, idempotency, jobs. Read it when calling the MCP tools directly.
+- [Compatibility](COMPATIBILITY.md) — what the `kimi` CLI does and does not guarantee, and every
+  deliberate non-guarantee.
+- [Security policy](SECURITY.md) — the verified security model, and how to report a vulnerability.
+- [Contributing](CONTRIBUTING.md) — set up a checkout and prepare a pull request.
+- [Agent conventions](AGENTS.md) — the authoritative working rules for humans and agents.
+- [Upgrading kimi](docs/UPGRADING-KIMI.md) — the probes to re-run before supporting a new `kimi`
+  version.
+- [Releasing](docs/RELEASING.md) — the ordered release runbook.
+- [Changelog](CHANGELOG.md) · [Architecture decision records](docs/adr/README.md) — decision
+  history, not current policy.

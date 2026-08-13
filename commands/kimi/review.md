@@ -3,7 +3,7 @@ description: Have Kimi review your git changes and return structured findings
 argument-hint: "[working_tree|branch <base>|commit <sha>]"
 ---
 
-Use the `kimi_review_changes` MCP tool from the kimi-in-claude server to get an
+Use the `kimi_review_changes` MCP tool from the moonbridge server to get an
 independent code review from Kimi.
 
 Scope request: $ARGUMENTS

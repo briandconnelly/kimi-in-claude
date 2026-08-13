@@ -4,9 +4,9 @@ import re
 import pytest
 from pydantic import ValidationError
 
-from kimi_in_claude import __version__
-from kimi_in_claude import schemas as s
-from kimi_in_claude.schemas import (
+from moonbridge import __version__
+from moonbridge import schemas as s
+from moonbridge.schemas import (
     ERROR_ENVELOPE_SCHEMA,
     RESULT_META_SCHEMA,
     ErrorDetail,
@@ -137,7 +137,7 @@ def _fingerprint_bearing_models():
     live module rather than trusting a maintained list to stay in sync with it."""
     from pydantic import BaseModel
 
-    from kimi_in_claude import schemas
+    from moonbridge import schemas
 
     return [
         obj
@@ -458,7 +458,7 @@ def test_loosened_schemas_accept_real_payloads():
     """Widening must not reject the emitted payload (the core guarantee)."""
     import jsonschema
 
-    from kimi_in_claude.server import kimi_capabilities, kimi_status
+    from moonbridge.server import kimi_capabilities, kimi_status
 
     jsonschema.validate(kimi_capabilities(), s.CAPABILITIES_SCHEMA)
     jsonschema.validate(kimi_status(), s.STATUS_SCHEMA)
@@ -475,7 +475,7 @@ def test_capabilities_result_schema_accepts_both_detail_modes():
     schema, not in the response (the wire bytes are unchanged either way)."""
     import jsonschema
 
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     summary = kimi_capabilities(include_schemas=["capabilities-result"])
     full = kimi_capabilities(detail="full", include_schemas=["capabilities-result"])
@@ -577,8 +577,8 @@ def test_status_result_has_no_default_errors():
 def test_error_envelope_schema_validates_runtime_error():
     from pydantic import TypeAdapter
 
-    from kimi_in_claude.errors import make_error, serialize_error
-    from kimi_in_claude.schemas import ErrorResult, Meta
+    from moonbridge.errors import make_error, serialize_error
+    from moonbridge.schemas import ErrorResult, Meta
 
     env = ErrorResult(
         error=make_error("job_running", "x", retry_after_ms=2000, repair_arguments={"job_id": "j"}),
@@ -600,7 +600,7 @@ def test_no_raw_errorresult_model_dump_outside_serializer():
     import ast
     import pathlib
 
-    src = pathlib.Path("src/kimi_in_claude")
+    src = pathlib.Path("src/moonbridge")
     offenders = []
     for p in src.rglob("*.py"):
         if p.name == "errors.py":
@@ -628,8 +628,8 @@ def test_error_envelope_validates_temporary_error():
     """A valid rate-limited (temporary=True, retry_after_ms set) envelope validates."""
     import jsonschema
 
-    from kimi_in_claude.errors import make_error, serialize_error
-    from kimi_in_claude.schemas import ERROR_ENVELOPE_SCHEMA, ErrorResult, Meta
+    from moonbridge.errors import make_error, serialize_error
+    from moonbridge.schemas import ERROR_ENVELOPE_SCHEMA, ErrorResult, Meta
 
     env = ErrorResult(
         error=make_error("kimi_rate_limited", "rate limited", retry_after_ms=5000),
@@ -650,8 +650,8 @@ def test_error_envelope_validates_non_temporary_error():
     """A valid non-temporary error (invalid_arguments, retry_after_ms=null) validates."""
     import jsonschema
 
-    from kimi_in_claude.errors import make_error, serialize_error
-    from kimi_in_claude.schemas import (
+    from moonbridge.errors import make_error, serialize_error
+    from moonbridge.schemas import (
         ERROR_ENVELOPE_SCHEMA,
         ErrorResult,
         InvalidArgument,
@@ -681,7 +681,7 @@ def test_error_envelope_rejects_missing_ok():
     """An envelope missing the required 'ok' field is rejected by the schema."""
     import jsonschema
 
-    from kimi_in_claude.schemas import ERROR_ENVELOPE_SCHEMA
+    from moonbridge.schemas import ERROR_ENVELOPE_SCHEMA
 
     bad = {
         "error": {
@@ -707,7 +707,7 @@ def test_error_envelope_rejects_invariant_violation():
     """An envelope with temporary=False and retry_after_ms=5 violates the model invariant."""
     import jsonschema
 
-    from kimi_in_claude.schemas import ERROR_ENVELOPE_SCHEMA
+    from moonbridge.schemas import ERROR_ENVELOPE_SCHEMA
 
     bad = {
         "ok": False,
@@ -735,7 +735,7 @@ def test_error_envelope_schema_has_dialect():
 
     Pydantic v2 emits $defs → 2020-12-style references.
     """
-    from kimi_in_claude.schemas import ERROR_ENVELOPE_SCHEMA
+    from moonbridge.schemas import ERROR_ENVELOPE_SCHEMA
 
     assert ERROR_ENVELOPE_SCHEMA["$schema"] == "https://json-schema.org/draft/2020-12/schema"
 
@@ -765,7 +765,7 @@ def test_output_schema_declares_dialect(name, sch):
 def _wire_catalog_bytes() -> int:
     import asyncio
 
-    from kimi_in_claude.server import mcp
+    from moonbridge.server import mcp
 
     tools = asyncio.run(mcp.list_tools())
     catalog = [
@@ -918,7 +918,7 @@ def test_delegate_result_with_findings_validates_against_schema():
 # --------------------------------------------------------------------------- #
 # Advisory polled event-activity fields (Task 3 / #139)
 # --------------------------------------------------------------------------- #
-from kimi_in_claude.schemas import (  # noqa: E402
+from moonbridge.schemas import (  # noqa: E402
     FINGERPRINT,
     FINGERPRINT_COVERS,
     AsyncLifecycle,
@@ -948,7 +948,7 @@ def test_result_ok_is_required_nullable_on_job_models():
     # #335: result_ok has defined null meaning and must always be present, so it is
     # declared without a default — a missed mapping site fails construction, not
     # silently defaults to null.
-    from kimi_in_claude.schemas import JobSummary
+    from moonbridge.schemas import JobSummary
 
     with pytest.raises(ValidationError):
         JobStatus(
@@ -992,7 +992,7 @@ def test_async_lifecycle_advertises_activity_without_touching_progress_support()
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "kimi-in-claude/0.1/schema-1"
+    assert FINGERPRINT == "moonbridge/0.1/schema-1"
 
 
 def test_fingerprint_covers_is_a_nonempty_stable_tuple():
@@ -1015,7 +1015,7 @@ def test_fingerprint_covers_description_discloses_the_release_identity_carveout(
 
     Boundary-aware matching: a bare `in` check for "version" is satisfied by the mention of
     `server_version`, so deleting the standalone mention would pass falsely."""
-    from kimi_in_claude.schemas import _FINGERPRINT_COVERS_DESC
+    from moonbridge.schemas import _FINGERPRINT_COVERS_DESC
 
     desc = _FINGERPRINT_COVERS_DESC
     for field in ("serverInfo.version", "server_version"):
@@ -1042,7 +1042,7 @@ def test_fingerprint_covers_description_survives_schema_noise_stripping():
 
     This also guards the silent-no-op failure mode: if the Field description and the kept
     constant ever drift apart, stripping silently resumes and only this test notices."""
-    from kimi_in_claude.schemas import (
+    from moonbridge.schemas import (
         _FINGERPRINT_COVERS_DESC,
         _KEPT_DESCRIPTIONS,
         CapabilitiesResult,
@@ -1064,7 +1064,7 @@ def test_fingerprint_covers_description_survives_schema_noise_stripping():
 
 def test_capabilities_result_exposes_fingerprint_covers_derived_from_constant():
     caps = CapabilitiesResult(
-        name="kimi-in-claude",
+        name="moonbridge",
         version="0.0.0",
         transport="stdio",
         stability="alpha",

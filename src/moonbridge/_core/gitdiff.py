@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from kimi_in_claude._core import gitproc, streamcap
-from kimi_in_claude._core.redaction import DiffRedactor
+from moonbridge._core import gitproc, streamcap
+from moonbridge._core.redaction import DiffRedactor
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -771,7 +771,7 @@ class _BoundedDiffAccumulator:
 
         The effective per-line ceiling is ``max(_MAX_DIFF_LINE_BYTES, max_bytes)``
         — it SCALES UP with the operator-configured diff display budget
-        (``KIMI_IN_CLAUDE_MAX_INPUT_BYTES``), not a fixed 8 MiB. This means:
+        (``MOONBRIDGE_MAX_INPUT_BYTES``), not a fixed 8 MiB. This means:
         - A line up to this ceiling is processed whole (exact ``diff_bytes``,
           full redaction visibility). Transient peak allocation is bounded by
           the operator budget, not attacker-controlled input size.

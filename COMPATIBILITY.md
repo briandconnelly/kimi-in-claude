@@ -1,7 +1,7 @@
 # Compatibility with the `kimi` CLI
 
 This server shells out to the `kimi` (Kimi Code) CLI. Every assumption it makes lives in
-`src/kimi_in_claude/cli_contract.py`, so an upstream change is centralized and greppable —
+`src/moonbridge/cli_contract.py`, so an upstream change is centralized and greppable —
 though incorporating one takes the lockstep procedure in
 [`docs/UPGRADING-KIMI.md`](docs/UPGRADING-KIMI.md), not a single edit.
 
@@ -19,7 +19,7 @@ zombie-worker guards), process-group teardown (`os.killpg` / `start_new_session`
 owned-children-only locking and direct-PID kills that orphan kimi's child processes, so the server
 refuses to start rather than ship a half-safe process model.
 
-`KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM=1` downgrades that refusal to a warning.
+`MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM=1` downgrades that refusal to a warning.
 
 ## What we invoke
 
@@ -59,7 +59,7 @@ listed so nobody re-adds the reassuring wording.
 - **No session transfer.** kimi has no app-server import equivalent. (`kimi acp` is the plausible
   future route; it is not used.)
 - **No operator passthrough.** kimi exposes no config-override, profile, or feature flags, and
-  reuses `-p` for **prompt** and `-c` for **continue** — so `KIMI_IN_CLAUDE_EXTRA_ARGS` refuses
+  reuses `-p` for **prompt** and `-c` for **continue** — so `MOONBRIDGE_EXTRA_ARGS` refuses
   everything rather than risk overriding a run's real instructions.
 
 ## Implicit context (disclosure)

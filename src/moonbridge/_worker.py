@@ -1,8 +1,8 @@
 """Detached background worker for the propose tier.
 
-Invoked as ``python -m kimi_in_claude._worker <job_dir>`` by the JobStore. Reads
+Invoked as ``python -m moonbridge._worker <job_dir>`` by the JobStore. Reads
 ``<job_dir>/spec.json``, runs the propose orchestration (worktree → kimi exec →
-diff → cleanup) via :func:`kimi_in_claude.delegate.run_delegate`, and writes the
+diff → cleanup) via :func:`moonbridge.delegate.run_delegate`, and writes the
 final result envelope to ``<job_dir>/result.json`` (atomically). It is import-light
 — it does NOT construct the FastMCP app.
 
@@ -22,11 +22,11 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from kimi_in_claude import delegate, orchestration
-from kimi_in_claude._core import redaction
-from kimi_in_claude._core.jobs import ActivityRecorder
-from kimi_in_claude.errors import make_error, serialize_error
-from kimi_in_claude.schemas import (
+from moonbridge import delegate, orchestration
+from moonbridge._core import redaction
+from moonbridge._core.jobs import ActivityRecorder
+from moonbridge.errors import make_error, serialize_error
+from moonbridge.schemas import (
     ErrorResult,
     Meta,
     RootsSource,

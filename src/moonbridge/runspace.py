@@ -20,10 +20,10 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from kimi_in_claude import kimi, normalize
-from kimi_in_claude._core import worktree
-from kimi_in_claude.errors import make_error, serialize_error
-from kimi_in_claude.schemas import ErrorDetail, ErrorResult, Meta, Usage
+from moonbridge import kimi, normalize
+from moonbridge._core import worktree
+from moonbridge.errors import make_error, serialize_error
+from moonbridge.schemas import ErrorDetail, ErrorResult, Meta, Usage
 
 if TYPE_CHECKING:
     from collections.abc import Callable

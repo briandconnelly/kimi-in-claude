@@ -16,8 +16,8 @@ import re
 import time
 from dataclasses import dataclass
 
-from kimi_in_claude import cli_contract
-from kimi_in_claude._core import runtime
+from moonbridge import cli_contract
+from moonbridge._core import runtime
 
 _LONG_FLAG_RE = re.compile(r"--[a-z][a-z0-9-]+")
 

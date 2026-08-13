@@ -27,17 +27,17 @@ from pathlib import Path
 from stat import S_ISREG
 from typing import TYPE_CHECKING
 
-from kimi_in_claude import cli_contract, config, normalize, preflight
-from kimi_in_claude._core import redaction, runtime
-from kimi_in_claude.errors import make_error
-from kimi_in_claude.schemas import ErrorDetail
+from moonbridge import cli_contract, config, normalize, preflight
+from moonbridge._core import redaction, runtime
+from moonbridge.errors import make_error
+from moonbridge.schemas import ErrorDetail
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from kimi_in_claude._core.runtime import CommandRun
-    from kimi_in_claude.preflight import FlagSupport
-    from kimi_in_claude.schemas import ErrorInfo, Meta
+    from moonbridge._core.runtime import CommandRun
+    from moonbridge.preflight import FlagSupport
+    from moonbridge.schemas import ErrorInfo, Meta
 
 
 @dataclass
@@ -188,7 +188,7 @@ def create_handshake_dir() -> str:
     """A fresh, private, server-owned directory for one run's handshake files.
 
     Deliberately NOT inside the worktree. The worktree is seeded from repository content,
-    so a repo that tracks `.kimi-in-claude` as a symlink would redirect these writes outside
+    so a repo that tracks `.moonbridge` as a symlink would redirect these writes outside
     the tree — verified: with such a symlink checked out, the prompt and agent files landed
     in the symlink's target. Worse, an agent file redirected to /dev/null would present kimi
     with an empty profile, which may silently fall back to the unrestricted default and
@@ -198,7 +198,7 @@ def create_handshake_dir() -> str:
     entirely. kimi reads the files by absolute path, which works because its Read tool
     accepts absolute paths (verified on 0.35.0).
     """
-    return tempfile.mkdtemp(prefix="kic-handshake-")
+    return tempfile.mkdtemp(prefix="moonbridge-handshake-")
 
 
 def write_handshake(run_dir: str, prompt_text: str, *, read_only: bool) -> dict[str, str]:

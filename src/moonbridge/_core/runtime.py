@@ -22,14 +22,14 @@ from typing import TYPE_CHECKING, cast
 import anyio
 from anyio.to_thread import run_sync
 
-from kimi_in_claude._core import streamcap
+from moonbridge._core import streamcap
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import TextIO
 
 # Default cap for captured stdout; the caller (config-aware layer) normally
-# overrides this with KIMI_IN_CLAUDE_MAX_OUTPUT_BYTES.
+# overrides this with MOONBRIDGE_MAX_OUTPUT_BYTES.
 DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 # Separate fixed reserve for stderr capture, independent of the stdout cap
 # (not necessarily smaller if a caller sets a tiny max_output_bytes).
@@ -40,7 +40,7 @@ _STDERR_RESERVE = 1 * 1024 * 1024
 _OBSERVER_QUEUE_BYTES = 8 * 1024 * 1024
 
 # Generic module: log via the stdlib only (no parent imports). Records propagate
-# to the `kimi_in_claude` logger, whose handlers go to stderr — never stdout, the
+# to the `moonbridge` logger, whose handlers go to stderr — never stdout, the
 # stdio JSON-RPC channel. This trail is what a future disconnect needs (#39).
 logger = logging.getLogger(__name__)
 

@@ -7,9 +7,9 @@ import subprocess
 
 import pytest
 
-from kimi_in_claude import preflight
-from kimi_in_claude._core import gitdiff
-from kimi_in_claude._core.runtime import CommandRun
+from moonbridge import preflight
+from moonbridge._core import gitdiff
+from moonbridge._core.runtime import CommandRun
 
 # Git environment variables that redirect where git reads/writes its object store,
 # index, and repo config. If pytest is invoked with any of these exported (e.g. by a
@@ -91,11 +91,11 @@ def _reset_preflight_cache():
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    """Strip KIMI_IN_CLAUDE_* env so tests see built-in defaults."""
+    """Strip MOONBRIDGE_* env so tests see built-in defaults."""
     import os
 
     for key in list(os.environ):
-        if key.startswith("KIMI_IN_CLAUDE_"):
+        if key.startswith("MOONBRIDGE_"):
             monkeypatch.delenv(key, raising=False)
     return monkeypatch
 
@@ -131,8 +131,8 @@ def _no_real_kimi(request, monkeypatch):
     if request.node.get_closest_marker("integration"):
         return
 
-    from kimi_in_claude import cli_contract
-    from kimi_in_claude._core import runtime
+    from moonbridge import cli_contract
+    from moonbridge._core import runtime
 
     real_sync = runtime.run_sync_capture
     real_async = runtime.run_async

@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from kimi_in_claude._core import idempotency as idem
+from moonbridge._core import idempotency as idem
 
 
 # --------------------------------------------------------------- pure helpers

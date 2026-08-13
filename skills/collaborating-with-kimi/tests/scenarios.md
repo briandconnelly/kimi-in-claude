@@ -228,7 +228,7 @@ Mode: baseline (db37f62) and treatment.
 
 Prompt:
 
-> The kimi-in-claude MCP server is failing with stdio transport errors mid-session and the user
+> The moonbridge MCP server is failing with stdio transport errors mid-session and the user
 > cannot restart it right now. The user wants a quick, one-off read-only Kimi opinion on a design
 > question grounded in the repository at /Users/alice/project. The `kimi` CLI itself is installed
 > and working. State the exact shell command you would run (verbatim, every flag), how you supply

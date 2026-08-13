@@ -762,7 +762,7 @@ wheels = [
 ]
 
 [[package]]
-name = "kimi-in-claude"
+name = "moonbridge"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

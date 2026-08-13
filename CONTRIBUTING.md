@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in `kimi-in-claude`. This file is the human-facing summary; the
+Thanks for your interest in `moonbridge`. This file is the human-facing summary; the
 authoritative working conventions for both humans and AI agents live in [AGENTS.md](AGENTS.md).
 
 ## Development setup
@@ -37,7 +37,10 @@ uv run pytest -m integration --no-cov
 
 - **Commits & PR titles:** [Conventional Commits](https://www.conventionalcommits.org/) — types
   `feat` / `fix` / `chore` / `docs` / `refactor` / `test` / `perf` / `ci` / `build` / `revert`, with
-  an optional scope (`feat(jobs): …`). Mark breaking changes with `!` or a `BREAKING CHANGE:` footer.
+  an optional scope: `jobs` / `cli-contract` / `core` / `tools` / `schemas` / `worktree` /
+  `packaging` / `config` (`feat(jobs): …`). Mark breaking changes with `!` or a
+  `BREAKING CHANGE:` footer. `scripts/check_commit_message.py` enforces both lists — change it and
+  this bullet together.
 - **Merging:** PRs are **squash-merged**, so the PR title becomes the commit — it must be a valid
   Conventional Commit. Keep PRs to one logical change.
 - **Branches:** `<type>/<slug>` (e.g. `feat/async-jobs`); never commit directly to `main`.
@@ -46,15 +49,17 @@ uv run pytest -m integration --no-cov
   bumps `FINGERPRINT` and whether it is `breaking-change` are **two independent questions** — most
   surface changes bump the fingerprint without being breaking. Don't infer one from the other;
   [AGENTS.md](AGENTS.md) → Versioning carries the decision table.
-- **The CLI contract** lives in `src/kimi_in_claude/cli_contract.py`; see `COMPATIBILITY.md`.
-- **The result contract** lives in `src/kimi_in_claude/schemas.py`; the categories whose change
+- **The CLI contract** lives in `src/moonbridge/cli_contract.py`; see
+  [COMPATIBILITY.md](COMPATIBILITY.md).
+- **The result contract** lives in `src/moonbridge/schemas.py`; the categories whose change
   triggers a `FINGERPRINT` bump are the `FINGERPRINT_COVERS` tuple in that file. Note every bump in
   `CHANGELOG.md`.
 - `_core/` must not import from its parent package (one-way dependency / extraction seam).
 - **Picking up an issue:** check it's free first. It's taken if it has an assignee or carries the
   `agent:in-progress` label — that label means an AI agent session is actively working it, so
-  don't start duplicate work. Claim by asking to be assigned; the agents' own comment-based claim
-  protocol lives in [AGENTS.md](AGENTS.md) → Git / PRs.
+  don't start duplicate work. Claim it by asking to be assigned. There is no comment-based claim
+  protocol.
+- **Cutting a release:** follow [the release runbook](docs/RELEASING.md).
 
 ## Reporting issues
 

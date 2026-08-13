@@ -13,11 +13,11 @@ import contextlib
 import logging
 import sys
 
-from kimi_in_claude import config
+from moonbridge import config
 
 # All server loggers live under this namespace; handlers are attached here and
-# child loggers (e.g. kimi_in_claude._core.runtime) inherit them by propagation.
-ROOT_LOGGER_NAME = "kimi_in_claude"
+# child loggers (e.g. moonbridge._core.runtime) inherit them by propagation.
+ROOT_LOGGER_NAME = "moonbridge"
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
@@ -25,9 +25,9 @@ _configured = False
 
 
 def configure(*, force: bool = False) -> logging.Logger:
-    """Configure the `kimi_in_claude` logger once (idempotent unless ``force``).
+    """Configure the `moonbridge` logger once (idempotent unless ``force``).
 
-    Attaches a stderr handler plus, when ``KIMI_IN_CLAUDE_LOG_FILE`` is set, a
+    Attaches a stderr handler plus, when ``MOONBRIDGE_LOG_FILE`` is set, a
     file handler. Never attaches a stdout handler. Returns the configured logger.
     """
     global _configured  # noqa: PLW0603 — intentional one-time handler setup guard
@@ -57,9 +57,7 @@ def configure(*, force: bool = False) -> logging.Logger:
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         except OSError:
-            logger.warning(
-                "could not open KIMI_IN_CLAUDE_LOG_FILE %r; logging to stderr only", path
-            )
+            logger.warning("could not open MOONBRIDGE_LOG_FILE %r; logging to stderr only", path)
 
     _configured = True
     return logger

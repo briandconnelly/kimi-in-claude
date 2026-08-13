@@ -11,9 +11,9 @@ import threading
 
 import pytest
 
-from kimi_in_claude import _worker, delegate
-from kimi_in_claude.errors import make_error
-from kimi_in_claude.schemas import ErrorResult, InvalidArgument, Meta
+from moonbridge import _worker, delegate
+from moonbridge.errors import make_error
+from moonbridge.schemas import ErrorResult, InvalidArgument, Meta
 
 _SPEC = {
     "kind": "kimi_delegate",
@@ -149,13 +149,13 @@ def test_worker_writes_cleanup_manifest(tmp_path, monkeypatch):
     _write_spec(jd, cwd=str(tmp_path))
 
     async def fake_run_delegate(task, cwd, meta, **kw):
-        kw["on_worktree_parent"]("/tmp/cic-worktree-abc")
+        kw["on_worktree_parent"]("/tmp/moonbridge-worktree-abc")
         return {"ok": True}
 
     monkeypatch.setattr(delegate, "run_delegate", fake_run_delegate)
     _worker.main([str(jd)])
     manifest = json.loads((jd / "cleanup.json").read_text())
-    assert manifest == {"paths": ["/tmp/cic-worktree-abc"]}
+    assert manifest == {"paths": ["/tmp/moonbridge-worktree-abc"]}
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGTERM"), reason="POSIX signals only")
@@ -203,7 +203,7 @@ def test_worker_meta_carries_workspace_warning(tmp_path, monkeypatch):
 
 
 def test_worker_dispatches_consult(tmp_path, monkeypatch):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(
@@ -231,7 +231,7 @@ def test_worker_dispatches_consult(tmp_path, monkeypatch):
 
 
 def test_worker_dispatches_review(tmp_path, monkeypatch):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(
@@ -322,7 +322,7 @@ def test_worker_reasoning_effort_absent_is_none(tmp_path, monkeypatch):
 
 
 def test_worker_threads_reasoning_effort_consult_and_review(tmp_path, monkeypatch):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     seen = {}
 
@@ -462,7 +462,7 @@ _GOOD_META = {
 def test_worker_guards_nonconformant_invalid_arguments_envelope(
     tmp_path, monkeypatch, error_fields
 ):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(
@@ -522,8 +522,8 @@ def test_worker_guards_nonconformant_invalid_arguments_envelope(
 def test_worker_conformant_invalid_arguments_envelope_passes_through_unchanged(
     tmp_path, monkeypatch
 ):
-    from kimi_in_claude import orchestration
-    from kimi_in_claude.errors import serialize_error
+    from moonbridge import orchestration
+    from moonbridge.errors import serialize_error
 
     jd = tmp_path / "job"
     _write_spec(
@@ -582,7 +582,7 @@ def test_worker_guards_invalid_arguments_with_nonmirrored_details(
     # `details` either doesn't mirror entry [0] or is missing entirely — the exact drift
     # the guard exists to catch, just moved from the list into `details` (Kimi review
     # follow-up on #419).
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(
@@ -631,7 +631,7 @@ def test_worker_guards_invalid_arguments_with_nonmirrored_details(
 
 
 def test_worker_guard_falls_through_on_pathological_error_shape(tmp_path, monkeypatch):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(
@@ -668,7 +668,7 @@ def test_worker_guard_falls_through_on_pathological_error_shape(tmp_path, monkey
 
 
 def test_worker_guard_falls_through_when_meta_validation_raises(tmp_path, monkeypatch):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(
@@ -705,7 +705,7 @@ def test_worker_guard_falls_through_when_meta_validation_raises(tmp_path, monkey
 
 
 def test_worker_guard_normalizes_with_spec_meta_when_meta_missing(tmp_path, monkeypatch):
-    from kimi_in_claude import orchestration
+    from moonbridge import orchestration
 
     jd = tmp_path / "job"
     _write_spec(

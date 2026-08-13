@@ -17,7 +17,7 @@ labels: bug
 
 ## Environment
 
-- `kimi-in-claude` version:
+- `moonbridge` version:
 - `kimi` CLI version (`kimi --version`):
 - OS:
 - How invoked (slash command / MCP tool / direct):

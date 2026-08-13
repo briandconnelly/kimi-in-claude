@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from kimi_in_claude import cli_contract, preflight
-from kimi_in_claude._core.runtime import CommandRun
+from moonbridge import cli_contract, preflight
+from moonbridge._core.runtime import CommandRun
 
 _HELP = """Usage: kimi [options] [command]
 

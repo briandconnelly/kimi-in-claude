@@ -25,7 +25,7 @@ from typing import Any
 
 from fastmcp import Client
 
-from kimi_in_claude.server import kimi_capabilities, mcp
+from moonbridge.server import kimi_capabilities, mcp
 
 # Framework-owned noise dropped from every wire object's ``_meta`` (observed
 # value ``{"fastmcp": {"tags": []}}``). Only this sub-key is removed; any

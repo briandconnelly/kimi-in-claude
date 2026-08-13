@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from conftest import run_git
-from kimi_in_claude._core import gitdiff, streamcap
-from kimi_in_claude._core.redaction import DiffRedactor
+from moonbridge._core import gitdiff, streamcap
+from moonbridge._core.redaction import DiffRedactor
 
 
 def _git(cwd, *args):

@@ -3,7 +3,7 @@
 | # | Claim | Result |
 |---|---|---|
 | M0-1 | worktree contains kimi | **FAILED** — cooperative task stayed in; adversarial prompt wrote outside via absolute path. kimi noted "The path is outside my working directory... so I'll run it." No enforcement. |
-| M0-2 | prompt/answer file handshake | PASSED — read `.kimi-in-claude/prompt.md`, wrote `answer.md` |
+| M0-2 | prompt/answer file handshake | PASSED — read the generated prompt file and wrote the requested answer file |
 | M0-3 | argv limit | ~950k chars; past it Node dies `RangeError: Maximum call stack size exceeded`, exit 7. Pointer-file mandatory. |
 | M0-4 | untrusted worktree loads project `.mcp.json` | NOT loaded — no `mcp__*` tools registered |
 | M0-5 | `--skills-dir <empty>` suppresses skills | PARTIAL — replaces user/project dirs only; built-ins (check-kimi-code-docs, update-config, write-goal) always load |
@@ -17,7 +17,7 @@ Not yet run: M0-6 (thinking effort).
 ## M0-7 mitigation
 The orphan's command line embeds the worktree path verbatim:
 `/bin/bash -c cd '<worktree>' && sleep 240`
-Since every run gets a unique `kic-worktree-<rand>` path, a sweep keyed on that string reliably
+Since every run gets a unique worktree path, a sweep keyed on that string reliably
 finds strays. Kill sequence on timeout/cancel: killpg(kimi) -> sweep by worktree path -> SIGTERM,
 grace, SIGKILL -> only then `worktree.remove()` (a live writer would otherwise race the removal).
 

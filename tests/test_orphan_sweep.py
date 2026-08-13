@@ -21,7 +21,7 @@ import uuid
 
 import pytest
 
-from kimi_in_claude._core import runtime
+from moonbridge._core import runtime
 
 
 def _spawn_detached_child(marker: str) -> subprocess.Popen:
@@ -45,7 +45,7 @@ def _spawn_detached_child(marker: str) -> subprocess.Popen:
     # "unmarked child" assertion below could not distinguish them.
     leader_code = (
         "import os, subprocess, sys, time\n"
-        "code = 'import subprocess, time  # ' + os.environ['KIC_TEST_MARKER'] + "
+        "code = 'import subprocess, time  # ' + os.environ['MOONBRIDGE_TEST_MARKER'] + "
         '\'\\nsubprocess.Popen(["sleep", "120"])\\ntime.sleep(120)\'\n'
         "subprocess.Popen([sys.executable, '-c', code], start_new_session=True)\n"
         "time.sleep(120)\n"
@@ -55,7 +55,7 @@ def _spawn_detached_child(marker: str) -> subprocess.Popen:
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        env={**os.environ, "KIC_TEST_MARKER": marker},
+        env={**os.environ, "MOONBRIDGE_TEST_MARKER": marker},
     )
 
 
@@ -95,7 +95,7 @@ def _wait_gone(pid: int, timeout: float = 5.0) -> bool:
 @pytest.fixture
 def marker() -> str:
     """A unique marker standing in for the per-run worktree path."""
-    return f"kic-worktree-{uuid.uuid4().hex}"
+    return f"moonbridge-worktree-{uuid.uuid4().hex}"
 
 
 @pytest.fixture
@@ -118,7 +118,7 @@ def test_find_orphans_locates_a_process_by_marker(marker, reap):
 
 def test_find_orphans_is_empty_for_an_unused_marker():
     # Negative control: proves a positive result above is not a match-everything bug.
-    assert runtime.find_orphans(f"kic-worktree-{uuid.uuid4().hex}") == []
+    assert runtime.find_orphans(f"moonbridge-worktree-{uuid.uuid4().hex}") == []
 
 
 def test_find_orphans_never_returns_our_own_pid(marker):
@@ -189,7 +189,7 @@ def test_sweep_orphans_reclaims_an_unmarked_grandchild(marker, reap):
 
 def test_sweep_orphans_never_kills_our_own_process_group():
     # killpg on our own group would take down the MCP server and every sibling job.
-    assert os.getpgrp() not in runtime._orphan_process_groups(f"kic-{uuid.uuid4().hex}")
+    assert os.getpgrp() not in runtime._orphan_process_groups(f"moonbridge-{uuid.uuid4().hex}")
 
 
 def test_sweep_orphans_is_a_noop_without_a_marker():
@@ -230,7 +230,7 @@ def test_find_orphans_sees_a_marker_late_in_a_long_command_line(marker, reap):
     padding = "x" * 300
     leader_code = (
         "import os, subprocess, sys, time\n"
-        f"code = 'import time  # {padding} ' + os.environ['KIC_TEST_MARKER'] "
+        f"code = 'import time  # {padding} ' + os.environ['MOONBRIDGE_TEST_MARKER'] "
         "+ '\\ntime.sleep(120)'\n"
         "subprocess.Popen([sys.executable, '-c', code], start_new_session=True)\n"
         "time.sleep(120)\n"
@@ -240,6 +240,6 @@ def test_find_orphans_sees_a_marker_late_in_a_long_command_line(marker, reap):
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        env={**os.environ, "KIC_TEST_MARKER": marker},
+        env={**os.environ, "MOONBRIDGE_TEST_MARKER": marker},
     )
     assert _wait_for_orphan(marker), "a marker past the truncation point was not found"

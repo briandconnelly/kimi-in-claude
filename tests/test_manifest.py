@@ -5,12 +5,12 @@ from pathlib import Path
 
 from fastmcp import Client
 
-from kimi_in_claude import manifest, server
+from moonbridge import manifest, server
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "manifest_snapshot.json"
 
 # sha256 of the canonical manifest JSON; regenerate per the test failure message.
-EXPECTED_MANIFEST_HASH = "594f542d8dd149762071bc30da58421bf5cd4b7e54978e6613cc398408e03364"
+EXPECTED_MANIFEST_HASH = "8bd470b705df8b0cab949040c996e46f8f805ff002ab811fc16b0f0fe1c2a5ac"
 
 
 def test_canonicalize_strips_only_fastmcp_meta():
@@ -73,7 +73,7 @@ async def test_fingerprint_covers_accounts_for_every_section():
     guard — the manifest surface. Every manifest section maps to at least one coverage
     token, and the tokens are exactly that union: a newly guarded section (or a token
     with no section) fails here until the disclosure is reconciled."""
-    from kimi_in_claude.schemas import FINGERPRINT_COVERS
+    from moonbridge.schemas import FINGERPRINT_COVERS
 
     # Each canonical manifest section → the coverage token(s) that disclose it.
     section_tokens = {
@@ -176,7 +176,7 @@ def test_release_variable_exclusions_are_disclosed_in_the_coverage_description()
     """The manifest's release-variable exclusions and the agent-visible carve-out must
     stay in lockstep: widening one without disclosing the other re-opens the #337 gap.
     `serverInfo.version` is popped inline rather than declared, so it is named directly."""
-    from kimi_in_claude.schemas import _FINGERPRINT_COVERS_DESC
+    from moonbridge.schemas import _FINGERPRINT_COVERS_DESC
 
     assert manifest._RELEASE_VARIABLE_EXCLUDE  # positive control: non-empty
     # Parse the disclosed field list rather than searching the whole sentence: a loose
@@ -256,7 +256,7 @@ async def test_build_manifest_captures_initialize_without_version():
     advertised capabilities), minus only the release-variable server version."""
     m = await manifest.build_manifest()
     init = m["initialize"]
-    assert init.get("serverInfo", {}).get("name") == "kimi-in-claude"
+    assert init.get("serverInfo", {}).get("name") == "moonbridge"
     assert "version" not in init.get("serverInfo", {})
     assert init.get("protocolVersion")
     assert "capabilities" in init
@@ -292,7 +292,7 @@ async def test_manifest_matches_golden():
     assert current == _FIXTURE.read_text(encoding="utf-8"), (
         "agent-visible surface changed — review the snapshot diff, then in the SAME "
         "commit: bump FINGERPRINT (schema-N) in schemas.py, regenerate the fixture "
-        "(`uv run python -m kimi_in_claude.manifest > tests/fixtures/manifest_snapshot.json`), "
+        "(`uv run python -m moonbridge.manifest > tests/fixtures/manifest_snapshot.json`), "
         "and add a CHANGELOG entry under [Unreleased]."
     )
 

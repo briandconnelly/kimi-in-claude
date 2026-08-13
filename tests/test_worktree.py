@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from conftest import run_git
-from kimi_in_claude._core import gitdiff, gitproc, worktree
+from moonbridge._core import gitdiff, gitproc, worktree
 
 
 def _git(cwd, *args):
@@ -65,7 +65,7 @@ def test_git_ok_without_aliases_leaks_worktree_path_positive_control(repo, monke
     today's documented default for non-worktree callers (e.g. the rev-parse in `plan()`)."""
     fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
     monkeypatch.setattr(worktree, "_git", lambda *a, **k: fake)
-    wt_path = "/private/tmp/cic-worktree-zzz/tree"
+    wt_path = "/private/tmp/moonbridge-worktree-zzz/tree"
     with pytest.raises(worktree.WorktreeError) as ei:
         worktree._git_ok(str(repo), ["worktree", "add", "--detach", "--quiet", wt_path, "HEAD"], 30)
     assert wt_path in str(ei.value)
@@ -74,7 +74,7 @@ def test_git_ok_without_aliases_leaks_worktree_path_positive_control(repo, monke
 def test_git_ok_with_aliases_sanitizes_worktree_path_in_argv(repo, monkeypatch):
     fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
     monkeypatch.setattr(worktree, "_git", lambda *a, **k: fake)
-    wt_path = "/private/tmp/cic-worktree-zzz/tree"
+    wt_path = "/private/tmp/moonbridge-worktree-zzz/tree"
     aliases = worktree.path_aliases(wt_path)
     with pytest.raises(worktree.WorktreeError) as ei:
         worktree._git_ok(
@@ -85,7 +85,7 @@ def test_git_ok_with_aliases_sanitizes_worktree_path_in_argv(repo, monkeypatch):
         )
     msg = str(ei.value)
     assert wt_path not in msg
-    assert "cic-worktree-" not in msg
+    assert "moonbridge-worktree-" not in msg
 
 
 def test_git_ok_ordering_attack_b_relativize_first_would_shorten_secret_below_floor(
@@ -94,7 +94,7 @@ def test_git_ok_ordering_attack_b_relativize_first_would_shorten_secret_below_fl
     """Attack B: naive relativize-then-redact shortens `api_key=<root>/abcdefgh` to
     `api_key=./abcdefgh`, below the redactor's 16-char floor, so the secret escapes.
     Must still redact."""
-    wt_path = str(tmp_path / "cic-worktree-b" / "tree")
+    wt_path = str(tmp_path / "moonbridge-worktree-b" / "tree")
     aliases = worktree.path_aliases(wt_path)
     fake = subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr=f"api_key={wt_path}/abcdefgh"
@@ -114,7 +114,7 @@ def test_git_ok_ordering_attack_a_redact_first_would_fragment_the_alias(
     """Attack A: naive redact-then-relativize lets the redactor consume PART of the
     `file://` alias, leaving an un-relativizable dead-path remainder. Must still
     relativize (or, as here, fully redact the value the alias rides on)."""
-    wt_path = str(tmp_path / "cic-worktree-a" / "tree")
+    wt_path = str(tmp_path / "moonbridge-worktree-a" / "tree")
     aliases = worktree.path_aliases(wt_path)
     crafted = f"api_key={'A' * 16}=file://{wt_path}/abcdefgh"
     fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=crafted)
@@ -124,7 +124,7 @@ def test_git_ok_ordering_attack_a_redact_first_would_fragment_the_alias(
     msg = str(ei.value)
     assert "abcdefgh" not in msg
     assert wt_path not in msg
-    assert "cic-worktree-" not in msg
+    assert "moonbridge-worktree-" not in msg
 
 
 def test_create_sanitizes_worktree_path_in_worktree_add_failure(repo, monkeypatch):
@@ -143,7 +143,7 @@ def test_create_sanitizes_worktree_path_in_worktree_add_failure(repo, monkeypatc
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
     with pytest.raises(worktree.WorktreeError) as ei:
         worktree.create(str(repo), timeout=30)
-    assert "cic-worktree-" not in str(ei.value)
+    assert "moonbridge-worktree-" not in str(ei.value)
 
 
 def test_create_cleans_parent_on_worktree_add_timeout(repo, monkeypatch):
@@ -490,7 +490,7 @@ def test_remove_survives_unneutralizable_filter_introduced_after_create(repo, tm
 def test_ensure_repo_with_head_raises_outside_repo(tmp_path):
     import pytest
 
-    from kimi_in_claude._core import worktree
+    from moonbridge._core import worktree
 
     with pytest.raises(worktree.NotAGitRepoError):
         worktree.ensure_repo_with_head(str(tmp_path), timeout=10)
@@ -559,7 +559,7 @@ def test_seed_commit_failure_sanitizes_worktree_path(repo, monkeypatch):
     _fail_git_on_with_path(monkeypatch, lambda args: "commit" in args)
     with pytest.raises(worktree.WorktreeError, match="baseline") as ei:
         worktree.create(str(repo), timeout=30)
-    assert "cic-worktree-" not in str(ei.value)
+    assert "moonbridge-worktree-" not in str(ei.value)
 
 
 def test_seed_add_failure_sanitizes_worktree_path(repo, monkeypatch):
@@ -567,7 +567,7 @@ def test_seed_add_failure_sanitizes_worktree_path(repo, monkeypatch):
     _fail_git_on_with_path(monkeypatch, lambda args: args[:2] == ["add", "-A"])
     with pytest.raises(worktree.WorktreeError, match="baseline") as ei:
         worktree.create(str(repo), timeout=30)
-    assert "cic-worktree-" not in str(ei.value)
+    assert "moonbridge-worktree-" not in str(ei.value)
 
 
 def test_seed_filter_driver_enumeration_failure_sanitized(repo, monkeypatch):
@@ -589,7 +589,7 @@ def test_seed_filter_driver_enumeration_failure_sanitized(repo, monkeypatch):
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
     with pytest.raises(worktree.WorktreeError, match="filter drivers") as ei:
         worktree.create(str(repo), timeout=30, on_parent=parents.append)
-    assert "cic-worktree-" not in str(ei.value)
+    assert "moonbridge-worktree-" not in str(ei.value)
 
 
 def test_seed_dirty_after_commit_raises(repo, monkeypatch):
@@ -936,7 +936,7 @@ def test_unneutralizable_filter_name_sanitizes_embedded_worktree_path(repo, monk
     # immediately abutting the path would itself block alias-matching (same "erring toward
     # a missed rewrite" rule `<root>+suffix` relies on), which would falsely pass this test
     # even without the fix.
-    wt_path = "/private/tmp/cic-worktree-u1/tree"
+    wt_path = "/private/tmp/moonbridge-worktree-u1/tree"
     aliases = worktree.path_aliases(wt_path)
     stdout = f"filter.{wt_path}/sub=evil.smudge\n"
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
@@ -944,7 +944,7 @@ def test_unneutralizable_filter_name_sanitizes_embedded_worktree_path(repo, monk
     with pytest.raises(worktree.WorktreeError, match="cannot be safely neutralized") as ei:
         worktree._configured_filter_drivers(str(repo), 30, aliases=aliases)
     assert wt_path not in str(ei.value)
-    assert "cic-worktree-" not in str(ei.value)
+    assert "moonbridge-worktree-" not in str(ei.value)
 
 
 def test_unneutralizable_filter_name_without_aliases_leaks_embedded_worktree_path_positive_control(
@@ -953,7 +953,7 @@ def test_unneutralizable_filter_name_without_aliases_leaks_embedded_worktree_pat
     # Positive control: without aliases (the default, matching a source-repo-scoped
     # enumeration), the same crafted name DOES leak — proves the assertions above are not
     # vacuous.
-    wt_path = "/private/tmp/cic-worktree-v1/tree"
+    wt_path = "/private/tmp/moonbridge-worktree-v1/tree"
     stdout = f"filter.{wt_path}/sub=evil.smudge\n"
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
     monkeypatch.setattr(worktree.subprocess, "run", lambda *a, **k: fake)
@@ -998,7 +998,7 @@ def test_capture_diff_unneutralizable_filter_name_sanitized_end_to_end(repo, mon
         with pytest.raises(worktree.WorktreeError, match="cannot be safely neutralized") as ei:
             worktree.capture_diff(wt.path, timeout=30)
         assert wt.path not in str(ei.value)
-        assert "cic-worktree-" not in str(ei.value)
+        assert "moonbridge-worktree-" not in str(ei.value)
     finally:
         worktree.remove(str(repo), wt, timeout=30)
 
@@ -1056,7 +1056,7 @@ def test_path_aliases_on_removed_path(tmp_path):
     assert worktree.path_aliases(str(wt)) == before
 
 
-ROOT = "/private/tmp/cic-worktree-__g9bg1q/tree"
+ROOT = "/private/tmp/moonbridge-worktree-__g9bg1q/tree"
 ALIASES = (f"file://{ROOT}", ROOT)
 
 
@@ -1255,7 +1255,7 @@ def test_sanitize_prose_survives_a_crafted_partial_alias_consumption():
     out = worktree.sanitize_prose(crafted, ALIASES)
     assert "abcdefgh" not in out
     assert ROOT not in out
-    assert "cic-worktree-" not in out
+    assert "moonbridge-worktree-" not in out
 
 
 def test_sanitize_prose_replaces_sentence_final_bare_root_with_a_safe_marker():
@@ -1268,7 +1268,7 @@ def test_sanitize_prose_replaces_sentence_final_bare_root_with_a_safe_marker():
     out = worktree.sanitize_prose(text, ALIASES)
     assert out == "fatal: failed in [worktree]."
     assert ROOT not in out
-    assert "cic-worktree-" not in out
+    assert "moonbridge-worktree-" not in out
 
 
 def test_sanitize_prose_ambiguous_marker_does_not_reopen_ordering_attack_b():
@@ -1286,7 +1286,7 @@ def test_sanitize_prose_ambiguous_marker_does_not_reopen_ordering_attack_b():
     out = worktree.sanitize_prose(attack, ALIASES) or ""
     assert secret_tail not in out
     assert ROOT not in out
-    assert "cic-worktree-" not in out
+    assert "moonbridge-worktree-" not in out
     assert "[redacted: secret value]" in out
     # Idempotency: re-running sanitize_prose on the already-sanitized output must be a
     # no-op — no staged token should ever survive into the emitted text for a second pass

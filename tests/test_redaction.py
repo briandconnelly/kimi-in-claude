@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from kimi_in_claude._core import redaction
+from moonbridge._core import redaction
 
 
 def _any_marker_in(text: str) -> bool:

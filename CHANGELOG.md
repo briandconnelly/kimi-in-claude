@@ -9,6 +9,18 @@ All notable changes to this project are documented here, following
 
 - Codex plugin and marketplace manifests, with Codex installation instructions and a shared,
   host-neutral Kimi collaboration skill.
+- `docs/RELEASING.md`, the ordered release runbook, and `docs/adr/README.md`, an ADR index that
+  marks the records as decision history rather than current policy.
+- A "Further reading" section in `README.md` that routes to every other document.
+
+### Fixed
+
+- `CONTRIBUTING.md` pointed at an `AGENTS.md` section that does not exist and described an
+  issue-claim protocol that `AGENTS.md` says does not exist.
+- The allowed commit scopes had no documented home, so the rule requiring
+  `scripts/check_commit_message.py` and the docs to mirror each other named no target.
+- The release procedure was stated differently in `AGENTS.md` and the pull-request template; both
+  now link to the runbook.
 
 ## [0.1.0] - 2026-08-12
 
@@ -30,7 +42,7 @@ First release.
   because kimi silently ignores an unrecognized effort rather than rejecting it.
 - `model` takes an alias from the user's `config.toml`. The catalog is read live from
   `kimi provider list --json`, and the provider `apiKey` in that payload never reaches an envelope.
-- `KIMI_IN_CLAUDE_EXTRA_ARGS` refuses every value: kimi exposes no safe passthrough and reuses
+- `MOONBRIDGE_EXTRA_ARGS` refuses every value: kimi exposes no safe passthrough and reuses
   `-p`/`-c` for prompt and continue.
 - `.mcp.json` installs the server from the public GitHub remote at a pinned release tag
   (`uvx --from git+…@v0.1.0`), so installing needs no clone. `tests/test_packaging.py` asserts the

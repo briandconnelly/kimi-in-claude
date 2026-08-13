@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from kimi_in_claude._core import idempotency
-from kimi_in_claude._core.jobs import DiscardOutcome, JobStore
+from moonbridge._core import idempotency
+from moonbridge._core.jobs import DiscardOutcome, JobStore
 
 # A snippet (run with cwd=job_dir) that writes the final envelope to result.json.
 _WRITE_DONE = "import json; open('result.json','w').write(json.dumps({'ok': True, 'tool': 't'}))"
@@ -517,7 +517,7 @@ def test_start_oserror_cleans_up(tmp_path):
 # --- defensive helpers / edge branches ---------------------------------------
 import os  # noqa: E402
 
-from kimi_in_claude._core import jobs  # noqa: E402
+from moonbridge._core import jobs  # noqa: E402
 
 
 def test_start_reaps_worker_if_meta_write_fails(tmp_path, monkeypatch):
@@ -837,7 +837,7 @@ def test_deadline_and_expiry_helpers(tmp_path):
 
 
 def test_poll_backoff_grows_and_is_bounded():
-    from kimi_in_claude._core.jobs import (
+    from moonbridge._core.jobs import (
         DEFAULT_POLL_AFTER_MS,
         MAX_POLL_AFTER_MS,
         poll_backoff_ms,
@@ -857,7 +857,7 @@ def test_poll_backoff_grows_and_is_bounded():
 
 
 def test_status_running_poll_after_ms_grows(tmp_path):
-    from kimi_in_claude._core.jobs import DEFAULT_POLL_AFTER_MS, MAX_POLL_AFTER_MS
+    from moonbridge._core.jobs import DEFAULT_POLL_AFTER_MS, MAX_POLL_AFTER_MS
 
     store = _store(tmp_path)
     # A running job ~6s in gets a grown poll hint, bounded by the cap.
@@ -994,7 +994,7 @@ def test_status_survives_unrepresentable_epoch(tmp_path: Path):
 def test_activity_observer_end_to_end_into_job_store(tmp_path: Path):
     """End-to-end: _worker._activity_observer drives ActivityRecorder → activity.json
     → JobStore.status surfaces events_seen, last_event_at, and event_age_ms."""
-    from kimi_in_claude import _worker
+    from moonbridge import _worker
 
     store = jobs.JobStore(root=tmp_path / "jobs", ttl_seconds=3600, max_seconds=60, max_count=10)
     cwd = str(tmp_path)
@@ -1217,7 +1217,7 @@ def test_idempotent_process_lock_contention_degrades_to_in_progress(tmp_path):
     # rather than parking this worker on _LOCK indefinitely.
     import threading
 
-    from kimi_in_claude._core import jobs as jobs_mod
+    from moonbridge._core import jobs as jobs_mod
 
     store = _store(tmp_path)
     cwd = str(tmp_path)
@@ -1270,7 +1270,7 @@ def test_idempotent_publish_failure_returns_running_job(tmp_path, monkeypatch, c
     # A publish() failure happens AFTER the paid worker is spawned. It must not be
     # reported as "failed to start" (false, and a retry would double-spend): the
     # caller gets the real running handle, and a same-key retry fails closed (#200).
-    from kimi_in_claude._core import idempotency
+    from moonbridge._core import idempotency
 
     store = _store(tmp_path)
     cwd = str(tmp_path)

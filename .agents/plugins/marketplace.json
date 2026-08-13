@@ -1,11 +1,11 @@
 {
-  "name": "kimi-in-claude",
+  "name": "moonbridge",
   "interface": {
-    "displayName": "Kimi (for Codex)"
+    "displayName": "Moonbridge (for Codex)"
   },
   "plugins": [
     {
-      "name": "kimi-in-claude",
+      "name": "moonbridge",
       "source": {
         "source": "local",
         "path": "./"

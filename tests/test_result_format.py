@@ -11,8 +11,8 @@ ordinary FINGERPRINT bumps are normalized out and do not move it.
 import json
 from pathlib import Path
 
-from kimi_in_claude import result_format_snapshot
-from kimi_in_claude.schemas import FINGERPRINT, RESULT_FORMAT
+from moonbridge import result_format_snapshot
+from moonbridge.schemas import FINGERPRINT, RESULT_FORMAT
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "result_format_snapshot.json"
 
@@ -20,7 +20,7 @@ _REGEN = (
     "persisted result-format surface changed — review the snapshot diff, then in the "
     "SAME commit: bump RESULT_FORMAT in schemas.py if an older reader could reject the "
     "new shape (see its comment for the rule), and regenerate the fixture (`uv run "
-    "python -m kimi_in_claude.result_format_snapshot > "
+    "python -m moonbridge.result_format_snapshot > "
     "tests/fixtures/result_format_snapshot.json`)."
 )
 
@@ -44,7 +44,7 @@ def test_snapshot_normalizes_wording_and_release_variables():
     text = result_format_snapshot.render()
     assert FINGERPRINT not in text
     assert '"description"' not in text
-    from kimi_in_claude import __version__
+    from moonbridge import __version__
 
     assert __version__ not in text
 

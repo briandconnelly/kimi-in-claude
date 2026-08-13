@@ -2,13 +2,13 @@ import typing
 
 import pytest
 
-from kimi_in_claude.errors import (
+from moonbridge.errors import (
     _REPAIR_BY_CODE,
     make_error,
     serialize_error,
     serialize_error_info,
 )
-from kimi_in_claude.schemas import ErrorCode, ErrorDetail, ErrorResult, InvalidArgument, Meta
+from moonbridge.schemas import ErrorCode, ErrorDetail, ErrorResult, InvalidArgument, Meta
 
 
 def _meta():

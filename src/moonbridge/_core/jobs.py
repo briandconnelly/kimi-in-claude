@@ -56,7 +56,7 @@ from enum import StrEnum
 from pathlib import Path
 from uuid import uuid4
 
-from kimi_in_claude._core import idempotency
+from moonbridge._core import idempotency
 
 logger = logging.getLogger(__name__)
 

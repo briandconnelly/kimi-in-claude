@@ -13,7 +13,7 @@ import pytest
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from pydantic import ValidationError
 
-from kimi_in_claude import (
+from moonbridge import (
     __version__,
     cli_contract,
     delegate,
@@ -22,10 +22,10 @@ from kimi_in_claude import (
     runspace,
     server,
 )
-from kimi_in_claude._core import worktree as _worktree_mod
-from kimi_in_claude._core.jobs import DiscardOutcome
-from kimi_in_claude._core.runtime import CommandRun
-from kimi_in_claude.schemas import (
+from moonbridge._core import worktree as _worktree_mod
+from moonbridge._core.jobs import DiscardOutcome
+from moonbridge._core.runtime import CommandRun
+from moonbridge.schemas import (
     FINGERPRINT,
     JOB_POLL_AFTER_MS,
     Detail,
@@ -60,7 +60,7 @@ def _fake_worktree_lifecycle(request, monkeypatch, tmp_path_factory):
     from types import SimpleNamespace
 
     def _create(repo, *, timeout, on_parent=None):
-        path = tmp_path_factory.mktemp("kic-worktree")
+        path = tmp_path_factory.mktemp("moonbridge-worktree")
         if on_parent is not None:
             on_parent(str(path))
         return SimpleNamespace(path=str(path), baseline_warning=None)
@@ -84,7 +84,7 @@ def _fake_result(last_message, *, exit_code=0, stderr="", events=""):
 # ----------------------------------------------------- platform startup guard
 def test_posix_platform_guard_refuses_native_windows(monkeypatch, capsys):
     """On os.name == 'nt' with no escape hatch, the server refuses to start (#232)."""
-    monkeypatch.delenv("KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM", raising=False)
+    monkeypatch.delenv("MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM", raising=False)
     with pytest.raises(SystemExit) as exc:
         server._enforce_posix_platform(os_name="nt")
     assert exc.value.code == 1
@@ -95,16 +95,16 @@ def test_posix_platform_guard_refuses_native_windows(monkeypatch, capsys):
 
 def test_posix_platform_guard_escape_hatch_warns(monkeypatch, capsys):
     """The escape hatch downgrades the hard exit to a stderr warning (#232)."""
-    monkeypatch.setenv("KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM", "1")
+    monkeypatch.setenv("MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM", "1")
     server._enforce_posix_platform(os_name="nt")  # must not raise
     err = capsys.readouterr().err
     assert "WARNING" in err
-    assert "KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM" in err
+    assert "MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM" in err
 
 
 def test_posix_platform_guard_refuses_other_non_posix(monkeypatch, capsys):
     """The platform contract is POSIX-only, not just native-Windows-only (#232)."""
-    monkeypatch.delenv("KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM", raising=False)
+    monkeypatch.delenv("MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM", raising=False)
     with pytest.raises(SystemExit) as exc:
         server._enforce_posix_platform(os_name="java")
     assert exc.value.code == 1
@@ -117,7 +117,7 @@ def test_posix_platform_guard_refuses_other_non_posix(monkeypatch, capsys):
 
 def test_posix_platform_guard_escape_hatch_reports_actual_os_name(monkeypatch, capsys):
     """Unsupported-platform warnings name the exact runtime os.name (#232)."""
-    monkeypatch.setenv("KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM", "1")
+    monkeypatch.setenv("MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM", "1")
     server._enforce_posix_platform(os_name="java")  # must not raise
     err = capsys.readouterr().err
     assert "WARNING" in err
@@ -126,7 +126,7 @@ def test_posix_platform_guard_escape_hatch_reports_actual_os_name(monkeypatch, c
 
 def test_posix_platform_guard_noop_on_posix(monkeypatch, capsys):
     """On a POSIX platform the guard is a no-op (#232)."""
-    monkeypatch.delenv("KIMI_IN_CLAUDE_ALLOW_UNSUPPORTED_PLATFORM", raising=False)
+    monkeypatch.delenv("MOONBRIDGE_ALLOW_UNSUPPORTED_PLATFORM", raising=False)
     server._enforce_posix_platform(os_name="posix")  # must not raise
     assert capsys.readouterr().err == ""
 
@@ -291,7 +291,7 @@ def test_capability_summary_covers_all_task_families():
 def test_capabilities_shape():
     res = server.kimi_capabilities()
     assert res["ok"] is True
-    assert res["name"] == "kimi-in-claude"
+    assert res["name"] == "moonbridge"
     assert "kimi_consult" in res["active_tools"]
     assert res["fingerprint"] == FINGERPRINT
 
@@ -967,7 +967,7 @@ async def test_consult_invalid_workspace(clean_env):
 
 
 async def test_consult_input_too_large(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     big = "x" * 2000
     res = await server.kimi_consult("q", workspace_root=str(tmp_path), extra_context=big)
     assert res["ok"] is False
@@ -977,7 +977,7 @@ async def test_consult_input_too_large(monkeypatch, clean_env, tmp_path):
 async def test_consult_combined_too_large_names_both_fields(monkeypatch, clean_env, tmp_path):
     # F2: the combined-size limit is on question + extra_context together, so when both
     # contribute the envelope names both via details.fields (not a single misleading field).
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await server.kimi_consult(
         "x" * 600, workspace_root=str(tmp_path), extra_context="y" * 600
     )
@@ -989,7 +989,7 @@ async def test_consult_combined_too_large_names_both_fields(monkeypatch, clean_e
 async def test_consult_question_only_too_large_names_question(monkeypatch, clean_env, tmp_path):
     # F2: when only `question` is oversized (no extra_context), report field="question"
     # rather than blaming extra_context, which contributed nothing.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await server.kimi_consult("x" * 2000, workspace_root=str(tmp_path))
     assert res["error"]["code"] == "input_too_large"
     assert res["error"]["details"]["field"] == "question"
@@ -997,14 +997,14 @@ async def test_consult_question_only_too_large_names_question(monkeypatch, clean
 
 
 async def test_consult_placeholder_env(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_consult("q", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "unexpanded_env_placeholder"
 
 
 # --- review ------------------------------------------------------------------
-from kimi_in_claude._core import gitdiff  # noqa: E402
+from moonbridge._core import gitdiff  # noqa: E402
 
 
 def _diff(text="diff --git a/x b/x\n+y", files=1, added=1, removed=0):
@@ -1067,7 +1067,7 @@ async def test_review_extra_context_reaches_prompt(monkeypatch, clean_env, tmp_p
 
 
 async def test_review_extra_context_too_large(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     monkeypatch.setattr(gitdiff, "gather_diff", lambda *a, **k: _diff())
     res = await _run_review_direct(tmp_path, scope="working_tree", extra_context="x" * 2000)
     assert res["ok"] is False
@@ -1090,7 +1090,7 @@ async def test_dry_run_extra_context_grows_prompt_bytes(monkeypatch, clean_env, 
 
 async def test_dry_run_extra_context_too_large(monkeypatch, clean_env, tmp_path):
     # The preview must reject what the real review would reject (issue #6).
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     monkeypatch.setattr(gitdiff, "gather_diff", lambda *a, **k: _diff())
     res = await server.kimi_dry_run(
         scope="working_tree", workspace_root=str(tmp_path), extra_context="x" * 2000
@@ -1237,7 +1237,7 @@ async def test_review_bad_isolation(clean_env, tmp_path):
 
 
 # --- delegate (propose tier) -------------------------------------------------
-from kimi_in_claude._core import worktree  # noqa: E402
+from moonbridge._core import worktree  # noqa: E402
 
 
 def _fake_worktree(tmp_path):
@@ -1289,7 +1289,7 @@ async def _delegate_with_diff(monkeypatch, tmp_path, diff):
 
 
 async def test_delegate_small_diff_not_truncated(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "1000")
     diff = "diff --git a/x b/x\n+small\n"
     res = await _delegate_with_diff(monkeypatch, tmp_path, diff)
     assert res["ok"] is True
@@ -1302,7 +1302,7 @@ async def test_delegate_small_diff_not_truncated(monkeypatch, clean_env, tmp_pat
 
 
 async def test_delegate_large_diff_truncated(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "1000")
     # Many changed files so the diffstat would be large if computed post-truncation.
     diff = "".join(f"diff --git a/f{i} b/f{i}\n+line {i}\n" for i in range(500))
     res = await _delegate_with_diff(monkeypatch, tmp_path, diff)
@@ -1317,7 +1317,7 @@ async def test_delegate_large_diff_truncated(monkeypatch, clean_env, tmp_path):
 
 async def test_delegate_diff_truncation_handles_multibyte(monkeypatch, clean_env, tmp_path):
     # A multibyte character straddling the byte cap must not raise or exceed the cap.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "1000")
     diff = "diff --git a/x b/x\n+" + ("€" * 1000) + "\n"
     res = await _delegate_with_diff(monkeypatch, tmp_path, diff)
     assert res["ok"] is True
@@ -1326,7 +1326,7 @@ async def test_delegate_diff_truncation_handles_multibyte(monkeypatch, clean_env
 
 
 async def test_delegate_empty_diff_not_truncated(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "1000")
     res = await _delegate_with_diff(monkeypatch, tmp_path, "")
     assert res["ok"] is True
     assert "diff" not in res or res["diff"] is None
@@ -1378,7 +1378,7 @@ async def test_delegate_redacts_secret_files_and_inline_values(monkeypatch, clea
 async def test_run_delegate_envelope_redacts_secrets(monkeypatch, clean_env, tmp_path):
     # The background worker serializes exactly run_delegate's returned dict, so this
     # validates the async result envelope (#57) without spawning a subprocess.
-    from kimi_in_claude.schemas import Meta
+    from moonbridge.schemas import Meta
 
     wt = _fake_worktree(tmp_path)
     monkeypatch.setattr(worktree, "create", lambda *a, **k: wt)
@@ -1436,7 +1436,7 @@ async def test_delegate_cleans_up_on_kimi_error(monkeypatch, clean_env, tmp_path
 async def test_run_delegate_reports_worktree_parent(monkeypatch, clean_env, tmp_path):
     # run_delegate forwards the on_worktree_parent hook to worktree.create so the
     # background worker can record the temp dir for cleanup before kimi runs.
-    from kimi_in_claude.schemas import Meta
+    from moonbridge.schemas import Meta
 
     wt = _fake_worktree(tmp_path)
 
@@ -1486,9 +1486,9 @@ async def test_run_delegate_invalid_cap_falls_back_to_default(
     # A corrupt/legacy job spec could carry a non-positive or non-int cap. run_delegate
     # must ignore it and use the configured (floored) default rather than slicing with a
     # bad bound (negative slice / TypeError).
-    from kimi_in_claude.schemas import Meta
+    from moonbridge.schemas import Meta
 
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "1000")
     wt = _fake_worktree(tmp_path)
     monkeypatch.setattr(worktree, "create", lambda *a, **k: wt)
     monkeypatch.setattr(worktree, "remove", lambda *a, **k: None)
@@ -1624,7 +1624,7 @@ async def test_delegate_bad_isolation(clean_env, tmp_path):
 
 
 async def test_delegate_input_too_large(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await server.kimi_delegate("z" * 2000, workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "input_too_large"
@@ -1825,14 +1825,14 @@ async def test_dry_run_bad_isolation(clean_env, tmp_path):
 async def test_dry_run_placeholder_env(monkeypatch, clean_env, tmp_path):
     """A dry run must surface the same unexpanded_env_placeholder a review would
     hit before gathering the diff (issue #46), not green-light it."""
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_dry_run(scope="working_tree", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "unexpanded_env_placeholder"
 
 
 async def test_dry_run_placeholder_error_meta_carries_paths(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_dry_run(
         scope="working_tree", workspace_root=str(tmp_path), paths=["a/b.py"]
     )
@@ -1906,7 +1906,7 @@ async def test_delegate_dry_run_invalid_workspace(clean_env):
 
 
 async def test_delegate_dry_run_input_too_large(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await server.kimi_delegate_dry_run("z" * 2000, workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "input_too_large"
@@ -1915,7 +1915,7 @@ async def test_delegate_dry_run_input_too_large(monkeypatch, clean_env, tmp_path
 
 
 async def test_delegate_dry_run_placeholder_env(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_delegate_dry_run("x", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "unexpanded_env_placeholder"
@@ -1936,7 +1936,7 @@ async def test_delegate_invalid_workspace(clean_env):
 
 
 async def test_delegate_placeholder_env(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_delegate("x", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "unexpanded_env_placeholder"
@@ -2076,7 +2076,7 @@ async def test_delegate_async_returns_job_id(monkeypatch, clean_env, tmp_path):
     # sync-clamped value (#413 description review).
     assert res["meta"]["timeout_seconds"] == server.config.job_max_seconds()
     # the spawned command targets the worker module
-    assert "kimi_in_claude._worker" in store.started[0]["cmd"]
+    assert "moonbridge._worker" in store.started[0]["cmd"]
     assert store.started[0]["spec"]["task"] == "do x"
     # The diff cap is snapshotted into the spec so the worker bounds its diff too.
     assert store.started[0]["spec"]["max_diff_bytes"] == server.config.max_delegate_diff_bytes()
@@ -2115,7 +2115,7 @@ async def test_delegate_async_invalid_workspace(clean_env):
 
 
 async def test_delegate_async_input_too_large(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     monkeypatch.setattr(server.worktree, "ensure_repo_with_head", lambda *a, **k: None)
     res = await server.kimi_delegate_async("z" * 2000, workspace_root=str(tmp_path))
     assert res["ok"] is False
@@ -2192,7 +2192,7 @@ async def test_job_result_strips_legacy_verdict_fields(monkeypatch, clean_env, t
     legacy = _done_envelope()
     legacy["verdict"] = "unknown"
     legacy["confidence"] = "medium"
-    legacy["meta"]["fingerprint"] = "kimi-in-claude/0.1/schema-0"  # a pre-upgrade worker
+    legacy["meta"]["fingerprint"] = "moonbridge/0.1/schema-0"  # a pre-upgrade worker
     store = _FakeStore(record=_ok_record("done"), result_json=legacy)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))
@@ -2408,13 +2408,13 @@ def test_job_status_model_requires_result_ok_from_store():
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "kimi-in-claude/0.1/schema-1"
+    assert FINGERPRINT == "moonbridge/0.1/schema-1"
 
 
 def test_capabilities_payload_discloses_fingerprint_covers():
     """The capabilities payload advertises what the fingerprint covers so a client can
     reason about cache invalidation programmatically instead of reading source (#178, F6)."""
-    from kimi_in_claude.schemas import FINGERPRINT_COVERS
+    from moonbridge.schemas import FINGERPRINT_COVERS
 
     caps = server.kimi_capabilities()
     assert caps["fingerprint_covers"] == list(FINGERPRINT_COVERS)
@@ -2610,7 +2610,7 @@ async def test_consult_async_returns_job_id(monkeypatch, clean_env, tmp_path):
 
 async def test_consult_async_combined_too_large_names_both_fields(monkeypatch, clean_env, tmp_path):
     # F2: the async consult path shares the combined-size guard, so it names both fields too.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await server.kimi_consult_async(
         "x" * 600, workspace_root=str(tmp_path), extra_context="y" * 600
     )
@@ -2631,7 +2631,7 @@ async def test_consult_async_invalid_workspace(clean_env):
 
 
 async def test_consult_async_input_too_large(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await server.kimi_consult_async(
         "q", workspace_root=str(tmp_path), extra_context="z" * 2000
     )
@@ -2645,7 +2645,7 @@ async def test_consult_async_input_too_large(monkeypatch, clean_env, tmp_path):
 
 
 async def test_consult_async_placeholder_env(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
     res = await server.kimi_consult_async("q", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "unexpanded_env_placeholder"
@@ -2866,7 +2866,7 @@ async def test_fixed_value_params_advertise_enum(tool_name, param, expected):
 
 async def test_isolation_param_description_does_not_hardcode_default():
     """IsolationParam must not label 'inherit' the unconditional default: the
-    default is env-configurable (KIMI_IN_CLAUDE_ISOLATION), so an agent omitting
+    default is env-configurable (MOONBRIDGE_ISOLATION), so an agent omitting
     the param on a configured server can get behavior the schema didn't promise.
     The description instead points to the server's configured default and to
     kimi_status for the resolved value (issue #183, audit N2)."""
@@ -2922,7 +2922,7 @@ async def test_dialect_middleware_overwrites_existing_schema():
 def test_input_dialect_is_the_shared_constant():
     """The input dialect is sourced from the one shared constant, so it can't drift from
     the output-schema dialect (audit N4, #185)."""
-    from kimi_in_claude import schemas
+    from moonbridge import schemas
 
     assert server.INPUT_SCHEMA_DIALECT == schemas.JSON_SCHEMA_DIALECT
 
@@ -3417,7 +3417,7 @@ async def test_job_not_found_points_at_list(monkeypatch, clean_env, tmp_path):
 def test_job_poll_interval_has_single_source():
     """The agent-visible JOB_POLL_AFTER_MS is the _core default, so a live job
     record's poll_after_ms and the job_running retry_after_ms can't drift."""
-    from kimi_in_claude._core import jobs
+    from moonbridge._core import jobs
 
     assert JOB_POLL_AFTER_MS == jobs.DEFAULT_POLL_AFTER_MS
     assert jobs.JobStore.__dataclass_fields__["poll_after_ms"].default == JOB_POLL_AFTER_MS
@@ -3558,16 +3558,16 @@ def test_job_status_model_surfaces_cleanup_warnings():
         "result_ok": None,
         "poll_after_ms": 1000,
         "ttl_seconds": 3600,
-        "cleanup_warnings": ["could not remove temporary path: /tmp/cic-worktree-x"],
+        "cleanup_warnings": ["could not remove temporary path: /tmp/moonbridge-worktree-x"],
         "extra": {},
     }
     model = server._job_status_model(data, server._job_workspace("/repo", "param"))
-    assert model.cleanup_warnings == ["could not remove temporary path: /tmp/cic-worktree-x"]
+    assert model.cleanup_warnings == ["could not remove temporary path: /tmp/moonbridge-worktree-x"]
     assert model.workspace.cwd == "/repo"
 
 
 def test_job_status_model_maps_activity_fields():
-    from kimi_in_claude.schemas import Workspace
+    from moonbridge.schemas import Workspace
 
     data = {
         "job_id": "j",
@@ -3687,7 +3687,7 @@ def test_internal_error_result_omits_empty_exception_detail(clean_env, tmp_path)
 
 def test_spawn_failure_envelope_redacts_secret_in_exception_text(clean_env, tmp_path):
     # F10: the spawn-failure internal_error is a second exception-text sink.
-    from kimi_in_claude._core import redaction
+    from moonbridge._core import redaction
 
     exc = OSError("cannot exec /home/AKIAIOSFODNN7EXAMPLE/worker")
     res = server._spawn_failure_envelope(exc, _meta_for(tmp_path))
@@ -3738,9 +3738,9 @@ async def test_job_result_valid_stored_error_message_redacted(monkeypatch, clean
     # F10 boundary redact: a SCHEMA-VALID stored ErrorResult (e.g. written by a pre-fix
     # worker still within its TTL) whose message carries a secret is returned via
     # serialize_error(validated) — the return boundary must redact it too.
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     meta = _meta_for(tmp_path).model_dump(mode="json")
     stored = _serialize_error(
@@ -3765,9 +3765,9 @@ async def test_job_result_valid_stored_error_message_preserved_when_clean(
 ):
     # The boundary redact must not alter legitimate, non-secret stored error text — and it
     # only touches internal_error (domain errors are already redacted at write time).
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     meta = _meta_for(tmp_path).model_dump(mode="json")
     # A domain error whose message merely resembles a token must pass through verbatim.
@@ -3794,9 +3794,9 @@ async def test_job_result_valid_stored_error_message_preserved_when_clean(
 
 
 async def test_replayed_error_preserves_the_originating_version(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     stored = _serialize_error(
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
@@ -3815,9 +3815,9 @@ async def test_replayed_error_without_a_version_stays_unattributed(
 ):
     """THE regression test. A payload written before this field existed must replay with
     NO version — an honest unknown — not with the replaying server's current version."""
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     stored = _serialize_error(
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
@@ -3875,9 +3875,9 @@ async def test_replayed_success_corrupt_job_id_type_is_not_healed(monkeypatch, c
 async def test_replayed_error_corrupt_fingerprint_type_is_not_healed(
     monkeypatch, clean_env, tmp_path
 ):
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     stored = _serialize_error(
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
@@ -3895,9 +3895,9 @@ async def test_replayed_error_corrupt_fingerprint_type_is_not_healed(
 
 
 def _stored_error_envelope(tmp_path, code="job_failed", message="x"):
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     return _serialize_error(
         _ErrorResult(error=_make_error(code, message), meta=_meta_for(tmp_path))
@@ -3919,7 +3919,7 @@ async def _replay(monkeypatch, tmp_path, rec, stored):
 async def test_error_payload_from_different_format_is_incompatible(
     monkeypatch, clean_env, tmp_path
 ):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _stored_error_envelope(tmp_path)
     stored["meta"]["field_from_the_future"] = "x"  # a newer release's Meta addition
@@ -3935,7 +3935,7 @@ async def test_error_payload_from_different_format_is_incompatible(
 async def test_success_payload_from_different_format_is_incompatible(
     monkeypatch, clean_env, tmp_path
 ):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _done_envelope()
     stored["field_from_the_future"] = "x"
@@ -3951,7 +3951,7 @@ async def test_new_literal_value_from_different_format_is_incompatible(
     # A newer release can also add ErrorCode/RepairStep Literal values; that fails
     # validation as literal_error, not extra_forbidden — classification must not
     # depend on the error type (#305).
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _stored_error_envelope(tmp_path)
     stored["error"]["code"] = "code_from_the_future"
@@ -3961,7 +3961,7 @@ async def test_new_literal_value_from_different_format_is_incompatible(
 
 
 async def test_unknown_key_with_matching_format_is_corruption(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _stored_error_envelope(tmp_path)
     stored["meta"]["field_from_the_future"] = "x"
@@ -3996,7 +3996,7 @@ async def test_known_field_failure_from_different_format_is_incompatible(
 ):
     # Format-only classification: a differing persisted format makes the record
     # unreadable by THIS release whichever field tripped validation.
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _done_envelope()
     stored["summary"] = 42  # known field, wrong type
@@ -4006,7 +4006,7 @@ async def test_known_field_failure_from_different_format_is_incompatible(
 
 
 async def test_incompatible_message_names_provenance_and_redacts(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _stored_error_envelope(tmp_path)
     stored["meta"]["server_version"] = "9.9.9"
@@ -4024,7 +4024,7 @@ async def test_incompatible_repair_prose_addresses_idempotency_replay(
 ):
     # A reused idempotency_key replays the same unreadable record, so the repair
     # must steer the caller to a fresh or omitted key.
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _stored_error_envelope(tmp_path)
     stored["meta"]["field_from_the_future"] = "x"
@@ -4033,7 +4033,7 @@ async def test_incompatible_repair_prose_addresses_idempotency_replay(
 
 
 async def test_consume_result_classifies_incompatibility_too(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     stored = _stored_error_envelope(tmp_path)
     stored["meta"]["field_from_the_future"] = "x"
@@ -4050,7 +4050,7 @@ async def test_consume_result_classifies_incompatibility_too(monkeypatch, clean_
 
 
 def _real_store(tmp_path):
-    from kimi_in_claude._core.jobs import JobStore
+    from moonbridge._core.jobs import JobStore
 
     return JobStore(root=tmp_path / "jobstate", ttl_seconds=3600, max_seconds=60, max_count=50)
 
@@ -4157,7 +4157,7 @@ async def test_consume_failed_delete_still_delivers(monkeypatch, clean_env, tmp_
     # Deletion stays best-effort (as the pre-split rmtree was): when removal fails
     # but the payload validated, deliver it and leave the record to the TTL reaper
     # rather than reporting an error about a result we hold in hand.
-    from kimi_in_claude._core.jobs import JobStore
+    from moonbridge._core.jobs import JobStore
 
     store = _real_store(tmp_path)
     cwd = str(tmp_path)
@@ -4192,15 +4192,15 @@ async def test_replay_normalizes_fingerprint_but_not_version(monkeypatch, clean_
     server_version = provenance about a past run -> preserved, because rewriting it would
     be a lie about which build produced the error.
     """
-    from kimi_in_claude.errors import make_error as _make_error
-    from kimi_in_claude.errors import serialize_error as _serialize_error
-    from kimi_in_claude.schemas import ErrorResult as _ErrorResult
+    from moonbridge.errors import make_error as _make_error
+    from moonbridge.errors import serialize_error as _serialize_error
+    from moonbridge.schemas import ErrorResult as _ErrorResult
 
     stored = _serialize_error(
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
     )
     stored["meta"]["server_version"] = "0.1.0"
-    stored["meta"]["fingerprint"] = "kimi-in-claude/0.1/schema-1"  # a pre-upgrade worker
+    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-1"  # a pre-upgrade worker
     store = _FakeStore(record=_ok_record("done"), result_json=stored)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))
@@ -4348,7 +4348,7 @@ async def test_keyed_sync_start_idempotent_runs_off_event_loop(monkeypatch, clea
 async def test_unkeyed_start_stamps_result_format(monkeypatch, clean_env, tmp_path):
     # The job record must carry the writer's persisted-format version so replay can
     # tell a cross-release payload from a corrupt one (#305).
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     seen = {}
 
@@ -4370,7 +4370,7 @@ async def test_unkeyed_start_stamps_result_format(monkeypatch, clean_env, tmp_pa
 
 
 async def test_keyed_async_start_stamps_result_format(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     seen = {}
 
@@ -4394,7 +4394,7 @@ async def test_keyed_async_start_stamps_result_format(monkeypatch, clean_env, tm
 
 
 async def test_keyed_sync_start_stamps_result_format(monkeypatch, clean_env, tmp_path):
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     seen = {}
 
@@ -4611,7 +4611,7 @@ def test_async_tools_advertise_job_lifecycle_metadata():
     """Each *_async tool structurally declares no native task/progress support and the
     custom kimi_job_* lifecycle; the referenced tools and JobStatus fields are real, so
     the metadata stays consistent with the registered surface (#94)."""
-    from kimi_in_claude.schemas import JobStatus
+    from moonbridge.schemas import JobStatus
 
     caps = server.kimi_capabilities()
     by_name = {t["name"]: t for t in caps["tool_details"]}
@@ -4931,7 +4931,7 @@ async def test_kimi_models_resource_matches_tool_payload():
 def _force_not_ready(monkeypatch):
     """Make kimi read as installed-but-unauthenticated so kimi_status reports a static
     'unknown' quota (not_ready()) without spawning the app-server for a live read (hermetic)."""
-    from kimi_in_claude import server
+    from moonbridge import server
 
     monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(
@@ -4947,7 +4947,7 @@ def _force_not_ready(monkeypatch):
 
 
 def test_error_envelope_resource_returns_full_schema():
-    from kimi_in_claude.server import error_envelope_resource
+    from moonbridge.server import error_envelope_resource
 
     schema = error_envelope_resource()
     assert schema["$defs"], "schema must carry $defs"
@@ -4955,7 +4955,7 @@ def test_error_envelope_resource_returns_full_schema():
 
 
 def test_capabilities_advertises_error_envelope_pointer():
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     caps = kimi_capabilities()
     assert caps["error_envelope_resource"] == "kimi://error-envelope"
@@ -5044,7 +5044,7 @@ async def test_resource_error_middleware_does_not_reclassify_mcp_error():
 def test_capabilities_advertises_resource_error_carrier(clean_env):
     """The resource error carrier is stated up front so a client need not infer the
     error.data shape from a first failure (F9, #181)."""
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     carrier = kimi_capabilities()["resource_error_carrier"]
     assert "error.data" in carrier
@@ -5096,7 +5096,7 @@ class TestResourceErrorCorrelation:
 
 
 def test_result_meta_resource_returns_full_schema():
-    from kimi_in_claude.server import result_meta_resource
+    from moonbridge.server import result_meta_resource
 
     schema = result_meta_resource()
     # The full Meta contract the opaque wire stub hides.
@@ -5106,20 +5106,20 @@ def test_result_meta_resource_returns_full_schema():
 
 
 def test_capabilities_advertises_result_meta_pointer():
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     assert kimi_capabilities()["result_meta_resource"] == "kimi://result-meta"
 
 
 def test_capabilities_omits_schemas_by_default():
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     # The opt-in fallback must not bloat the default payload (#179 caveat).
     assert "schemas" not in kimi_capabilities()
 
 
 def test_capabilities_include_schemas_embeds_requested_contracts():
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     caps = kimi_capabilities(include_schemas=["error-envelope", "result-meta"])
     assert set(caps["schemas"]) == {"error-envelope", "result-meta"}
@@ -5129,7 +5129,7 @@ def test_capabilities_include_schemas_embeds_requested_contracts():
 
 
 def test_capabilities_include_schemas_single_and_deduped():
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.server import kimi_capabilities
 
     caps = kimi_capabilities(include_schemas=["result-meta", "result-meta"])
     assert list(caps["schemas"]) == ["result-meta"]
@@ -5138,8 +5138,8 @@ def test_capabilities_include_schemas_single_and_deduped():
 def test_capabilities_include_parameter_contracts_fold_in():
     """A resource-blind client can reach the full kimi://params contracts from tools/list
     alone via the parameter-contracts fold-in (#333)."""
-    from kimi_in_claude.param_contracts import PARAMETER_CONTRACTS
-    from kimi_in_claude.server import kimi_capabilities
+    from moonbridge.param_contracts import PARAMETER_CONTRACTS
+    from moonbridge.server import kimi_capabilities
 
     caps = kimi_capabilities(include_schemas=["parameter-contracts"])
     embedded = caps["schemas"]["parameter-contracts"]
@@ -5149,7 +5149,7 @@ def test_capabilities_include_parameter_contracts_fold_in():
 
 
 def test_capabilities_result_resource_returns_full_schema():
-    from kimi_in_claude.server import capabilities_result_resource
+    from moonbridge.server import capabilities_result_resource
 
     schema = capabilities_result_resource()
     assert "tool_details" in schema["properties"]
@@ -5157,7 +5157,7 @@ def test_capabilities_result_resource_returns_full_schema():
 
 
 def test_status_result_resource_returns_full_schema():
-    from kimi_in_claude.server import status_result_resource
+    from moonbridge.server import status_result_resource
 
     schema = status_result_resource()
     assert "rate_limit" in schema["properties"]
@@ -5173,14 +5173,14 @@ def test_capabilities_include_schemas_returns_every_advertised_token_verbatim():
     equality against the canonical constants, not a marker lookup — `RateLimit` lives in
     three of the four `$defs` blocks, so a marker check passed a mis-wired token.
     """
-    from kimi_in_claude import param_contracts
-    from kimi_in_claude.schemas import (
+    from moonbridge import param_contracts
+    from moonbridge.schemas import (
         CAPABILITIES_RESULT_SCHEMA,
         ERROR_ENVELOPE_SCHEMA,
         RESULT_META_SCHEMA,
         STATUS_RESULT_SCHEMA,
     )
-    from kimi_in_claude.server import IncludeSchemasToken, kimi_capabilities
+    from moonbridge.server import IncludeSchemasToken, kimi_capabilities
 
     expected = {
         "error-envelope": ERROR_ENVELOPE_SCHEMA,
@@ -5353,7 +5353,7 @@ def _timeout_error_envelope(cwd: str):
 async def test_sync_consult_runs_through_job_store_and_sets_job_id(
     clean_env, tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -5375,7 +5375,7 @@ async def test_sync_consult_runs_through_job_store_and_sets_job_id(
 
 
 async def test_sync_summary_response_but_full_recoverable(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path), raw_text="RAW MODEL TEXT")
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -5393,7 +5393,7 @@ async def test_sync_summary_response_but_full_recoverable(clean_env, tmp_path, m
 
 
 async def test_sync_full_detail_keeps_raw_text(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path), raw_text="RAW MODEL TEXT")
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -5404,7 +5404,7 @@ async def test_sync_full_detail_keeps_raw_text(clean_env, tmp_path, monkeypatch)
 
 
 async def test_sync_error_envelope_is_recorded_done(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _timeout_error_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -5418,7 +5418,7 @@ async def test_job_list_and_status_flag_stored_error_result_ok_false(
 ):
     # #335: a stored ERROR envelope lists/reports status done, result_available true —
     # result_ok=false is the only field that tells it apart from a success without a fetch.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _timeout_error_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -5434,7 +5434,7 @@ async def test_job_list_and_status_flag_stored_error_result_ok_false(
 
 
 async def test_job_status_flags_stored_success_result_ok_true(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     monkeypatch.setattr(
         server, "_worker_cmd", _fake_worker_cmd(_consult_success_envelope(str(tmp_path)))
@@ -5448,7 +5448,7 @@ async def test_job_status_flags_stored_success_result_ok_true(clean_env, tmp_pat
 
 
 async def test_sync_review_runs_through_job_store(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     meta = server._base_meta(
         str(tmp_path),
@@ -5482,7 +5482,7 @@ async def test_sync_review_runs_through_job_store(clean_env, tmp_path, monkeypat
 
 
 async def test_sync_delegate_runs_through_job_store(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     _init_repo(tmp_path)  # delegate has a synchronous ensure_repo_with_head preflight
     meta = server._base_meta(
@@ -5514,7 +5514,7 @@ async def test_sync_delegate_runs_through_job_store(clean_env, tmp_path, monkeyp
 async def test_sync_delegate_preflight_not_a_git_repo_records_nothing(
     clean_env, tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
 
     def must_not_spawn(_jd):
@@ -5529,7 +5529,7 @@ async def test_sync_delegate_preflight_not_a_git_repo_records_nothing(
 
 
 def test_sync_preflight_failure_records_nothing(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
 
     async def go():
         return await server.kimi_consult("q", workspace_root="relative/not/absolute")
@@ -5543,7 +5543,7 @@ def test_sync_preflight_failure_records_nothing(clean_env, tmp_path, monkeypatch
 
 
 async def test_sync_spawn_failure_is_internal_error_no_record(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     monkeypatch.setattr(server, "_worker_cmd", lambda jd: ["/nonexistent-binary-xyz"])
     res = await server.kimi_consult("q", workspace_root=str(tmp_path))
@@ -5554,7 +5554,7 @@ async def test_sync_spawn_failure_is_internal_error_no_record(clean_env, tmp_pat
 
 
 async def test_sync_review_spawn_failure_is_internal_error(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     monkeypatch.setattr(server, "_worker_cmd", lambda jd: ["/nonexistent-binary-xyz"])
     res = await server.kimi_review_changes(scope="working_tree", workspace_root=str(tmp_path))
@@ -5564,7 +5564,7 @@ async def test_sync_review_spawn_failure_is_internal_error(clean_env, tmp_path, 
 
 
 async def test_sync_delegate_spawn_failure_is_internal_error(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     _init_repo(tmp_path)  # pass the synchronous ensure_repo_with_head preflight
     monkeypatch.setattr(server, "_worker_cmd", lambda jd: ["/nonexistent-binary-xyz"])
@@ -5578,7 +5578,7 @@ async def test_sync_cancellation_cancels_job(clean_env, tmp_path, monkeypatch):
     # The in-process Client does not reliably propagate task cancellation into the
     # handler coroutine, so we test _await_job_result's CancelledError path directly:
     # cancelling the awaiting task must cancel the job (spend stops).
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(server, "_worker_cmd", _sleeping_worker_cmd())
     cwd = str(tmp_path)
     meta = server._base_meta(
@@ -5670,8 +5670,8 @@ async def test_await_job_result_missing_result_payload_is_internal_error(
 async def test_sync_call_returns_envelope_even_under_eviction(clean_env, tmp_path, monkeypatch):
     # With a tiny count cap, each new sync call can evict an older terminal record —
     # but every sync call must still return its own envelope successfully.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("KIMI_IN_CLAUDE_JOB_MAX_COUNT", "2")
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_JOB_MAX_COUNT", "2")
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -5691,7 +5691,7 @@ async def test_sync_call_returns_envelope_even_under_eviction(clean_env, tmp_pat
 async def test_sync_run_failure_reports_is_error_true(clean_env, tmp_path, monkeypatch):
     # A failure surfaced from the (worker-produced) kimi run flips the MCP protocol
     # is_error flag through the boundary, same as before the reroute (#91).
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     meta = server._base_meta(
         str(tmp_path),
@@ -5947,7 +5947,7 @@ async def test_consult_async_created_has_no_replayed_flag(monkeypatch, clean_env
 async def test_consult_sync_reattach_classifies_incompatibility(monkeypatch, clean_env, tmp_path):
     # The sync tools share _finished_job_envelope via the keyed reattach path, so they
     # can surface job_result_incompatible too (#305).
-    from kimi_in_claude.schemas import RESULT_FORMAT
+    from moonbridge.schemas import RESULT_FORMAT
 
     done = _ok_record("done")
     done["kind"] = "kimi_consult"
@@ -6114,7 +6114,7 @@ async def test_idempotency_key_description_scopes_to_concrete_tool():
     separation, and must NOT reintroduce the misleading 'TTL window' single-horizon phrase;
     the true fail-closed horizon (max runtime + grace + TTL) and the replay marker moved to
     the kimi://params full contract, where they remain discoverable."""
-    from kimi_in_claude.param_contracts import PARAMETER_CONTRACTS
+    from moonbridge.param_contracts import PARAMETER_CONTRACTS
 
     tools = {t.name: t for t in await server.mcp.list_tools()}
     inline = tools["kimi_consult"].parameters["properties"]["idempotency_key"]["description"]
@@ -6242,13 +6242,13 @@ _TRANSCRIPT_REASON = "transcript_path must be a .jsonl session transcript."
 # --- app_server_stderr_tail: surfaced only where it is the primary diagnostic (#275) ------
 
 
-# --- KIMI_IN_CLAUDE_EXTRA_ARGS: status + preflight before spend (#231) -----------
+# --- MOONBRIDGE_EXTRA_ARGS: status + preflight before spend (#231) -----------
 
 
 def test_status_reports_invalid_extra_args(monkeypatch, clean_env):
     monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth."))
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--json")  # not allowlisted
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "--json")  # not allowlisted
     res = server.kimi_status()
     assert res["extra_args_configured"] is True
     assert res["extra_args_valid"] is False
@@ -6276,32 +6276,32 @@ async def test_consult_preflights_invalid_extra_args(monkeypatch, clean_env, tmp
         called = True
 
     monkeypatch.setattr(server.kimi, "run_kimi_exec", fake)
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--json")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "--json")
     res = await server.kimi_consult("q", workspace_root=str(tmp_path))
     await _assert_extra_args_rejected(res)
     assert called is False  # rejected before any spend
 
 
 async def test_review_preflights_invalid_extra_args(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "bare-positional")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "bare-positional")
     res = await server.kimi_review_changes(workspace_root=str(tmp_path))
     await _assert_extra_args_rejected(res)
 
 
 async def test_delegate_preflights_invalid_extra_args(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c sandbox_mode=danger-full-access")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-c sandbox_mode=danger-full-access")
     res = await server.kimi_delegate("do a thing", workspace_root=str(tmp_path))
     await _assert_extra_args_rejected(res)
 
 
 async def test_dry_run_preflights_invalid_extra_args(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--json")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "--json")
     res = await server.kimi_dry_run(workspace_root=str(tmp_path))
     await _assert_extra_args_rejected(res)
 
 
 async def test_delegate_dry_run_preflights_invalid_extra_args(monkeypatch, clean_env, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--json")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "--json")
     res = await server.kimi_delegate_dry_run("task", workspace_root=str(tmp_path))
     await _assert_extra_args_rejected(res)
 
@@ -6328,7 +6328,7 @@ async def test_error_envelope_carries_server_version(clean_env, tmp_path, monkey
     envelope, not via the model (#304)."""
     from fastmcp import Client
 
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     async with Client(server.mcp) as client:
         result = await client.call_tool(
             "kimi_job_status",
@@ -6404,7 +6404,7 @@ async def test_dry_run_untracked_include_gathers_untracked(clean_env, tmp_path):
 
 
 async def test_consult_reasoning_effort_call_beats_server_default(monkeypatch, clean_env, tmp_path):
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "low")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "low")
     calls = _capture_run_sync(monkeypatch)
     await server.kimi_consult("q", workspace_root=str(tmp_path), reasoning_effort="xhigh")
     assert calls["meta"].reasoning_effort == "xhigh"
@@ -6414,7 +6414,7 @@ async def test_consult_reasoning_effort_call_beats_server_default(monkeypatch, c
 async def test_consult_reasoning_effort_falls_back_to_server_default(
     monkeypatch, clean_env, tmp_path
 ):
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "low")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "low")
     calls = _capture_run_sync(monkeypatch)
     await server.kimi_consult("q", workspace_root=str(tmp_path))
     assert calls["meta"].reasoning_effort == "low"
@@ -6424,7 +6424,7 @@ async def test_consult_reasoning_effort_falls_back_to_server_default(
 async def test_consult_empty_reasoning_effort_is_passed_through(monkeypatch, clean_env, tmp_path):
     # Whole-domain rule: an explicit "" is the caller's value, not "unset" — it must
     # not silently fall back to the server default.
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "low")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "low")
     calls = _capture_run_sync(monkeypatch)
     await server.kimi_consult("q", workspace_root=str(tmp_path), reasoning_effort="")
     assert calls["meta"].reasoning_effort == ""
@@ -6477,7 +6477,7 @@ async def test_review_and_delegate_specs_carry_reasoning_effort(monkeypatch, cle
 
 
 async def test_status_reports_reasoning_effort_defaults(monkeypatch, clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "medium")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "medium")
     monkeypatch.setattr(server.kimi, "kimi_version", lambda *a, **k: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda *a, **k: (True, "ok"))
     res = server.kimi_status()
@@ -6515,7 +6515,7 @@ async def test_dry_run_echoes_model_and_reasoning_effort(monkeypatch, clean_env,
 
 
 async def test_dry_run_effort_defaults_from_env(monkeypatch, clean_env, tmp_path):
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "low")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "low")
     monkeypatch.setattr(
         gitdiff,
         "gather_diff",
@@ -6802,7 +6802,7 @@ async def test_dry_run_deadline_advisory_unrecognized_effort_is_null(
 async def test_dry_run_model_echo_reconciles_help_gated_drop(monkeypatch, clean_env, tmp_path):
     # Kimi-review regression (#309): on a CLI without --model the paid call DROPS the
     # flag and nulls meta.model; the preview's echo must not claim the dropped override.
-    from kimi_in_claude import preflight
+    from moonbridge import preflight
 
     monkeypatch.setattr(
         server.preflight,
@@ -6864,7 +6864,7 @@ async def test_env_reasoning_effort_shape_rejected_pre_spend(
 ):
     # Kimi re-review regression (#309): the env default never crosses the MCP
     # boundary, so the resolved value is re-checked pre-spend — no run may start.
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", bad_env)
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", bad_env)
 
     async def never_run(*a, **k):
         raise AssertionError("a run must not start for an invalid effort default")
@@ -6879,7 +6879,7 @@ async def test_env_reasoning_effort_shape_rejected_pre_spend(
 
 async def test_env_reasoning_effort_shape_rejected_in_dry_runs(monkeypatch, clean_env, tmp_path):
     # The previews must fail exactly where the paid call would.
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "z" * 129)
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "z" * 129)
     res = await server.kimi_dry_run(scope="working_tree", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "invalid_reasoning_effort"
@@ -6894,8 +6894,8 @@ async def test_env_reasoning_effort_shape_repair_points_at_config(monkeypatch, c
     # the machine repair must steer to the operator config — next_step "correct_config"
     # with NO repair tool — not the backend-rejection repair (correct_arguments +
     # kimi_models), which would send an agent to make a useless kimi_models call while
-    # the real fix is the KIMI_IN_CLAUDE_REASONING_EFFORT default.
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "z" * 129)
+    # the real fix is the MOONBRIDGE_REASONING_EFFORT default.
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "z" * 129)
 
     async def never_run(*a, **k):
         raise AssertionError("no run may start for an invalid effort default")
@@ -6963,7 +6963,7 @@ async def test_env_reasoning_effort_surrogate_rejected_in_dry_run(clean_env, tmp
     # A surrogateescape'd environment value (how a non-UTF-8 env byte surfaces in
     # os.environ) must produce the same envelope through the dry run, not a raw
     # FastMCP/Pydantic serialization error.
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "high\udcff")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "high\udcff")
     res = await server.kimi_dry_run(scope="working_tree", workspace_root=str(tmp_path))
     assert res["ok"] is False
     assert res["error"]["code"] == "invalid_reasoning_effort"
@@ -6972,14 +6972,14 @@ async def test_env_reasoning_effort_surrogate_rejected_in_dry_run(clean_env, tmp
 
 
 async def test_env_reasoning_effort_shape_parity_sync_async(monkeypatch, clean_env, tmp_path):
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "w" * 129)
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "w" * 129)
     res_async = await server.kimi_consult_async("q", workspace_root=str(tmp_path))
     assert res_async["ok"] is False
     assert res_async["error"]["code"] == "invalid_reasoning_effort"
 
 
 async def test_valid_env_reasoning_effort_still_runs(monkeypatch, clean_env, tmp_path):
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "xhigh")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "xhigh")
     calls = _capture_run_sync(monkeypatch)
     res = await server.kimi_consult("q", workspace_root=str(tmp_path))
     assert res.get("_captured") is True
@@ -7203,7 +7203,7 @@ class TestCapabilitiesContractsDetail:
         # already non-required in both — this test is what pins that.
         import jsonschema
 
-        from kimi_in_claude import schemas as s
+        from moonbridge import schemas as s
 
         async with Client(server.mcp) as c:
             payload = (
@@ -7288,7 +7288,7 @@ class TestSpendMarkers:
         assert "kimi_delegate_dry_run" not in desc
 
 
-STABILITY_META_KEY = "dev.bconnelly.kimi-in-claude/stability"
+STABILITY_META_KEY = "dev.bconnelly.moonbridge/stability"
 
 
 class TestToolDisplayMetadata:
@@ -7685,7 +7685,7 @@ class TestRootsCapabilityGating:
         assert source == "client"
 
 
-TRIAGE_META_KEY = "dev.bconnelly.kimi-in-claude/triage"
+TRIAGE_META_KEY = "dev.bconnelly.moonbridge/triage"
 
 
 class TestResourceTriageMetadata:
@@ -7752,7 +7752,7 @@ class TestResourceTriageMetadata:
 
 async def test_delivered_success_envelope_omits_null_meta_keys(clean_env, tmp_path, monkeypatch):
     # The stored envelope retains its null meta keys; the DELIVERED one must not.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     assert envelope["meta"]["session_id"] is None  # premise: the writer emits the null
@@ -7771,7 +7771,7 @@ async def test_delivered_envelope_keeps_required_and_falsy_meta_values(
 ):
     # A falsiness-based filter would eat truncated=False; the required members must
     # all survive so the payload still validates against kimi://result-meta.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -7797,7 +7797,7 @@ async def test_delivered_envelope_keeps_populated_optional_meta_values(
     # Worth having on top of the wire-shape fixture, which drives _finished_job_envelope
     # directly: this goes through the FastMCP boundary, so it also covers the
     # output-schema serialization into structured_content.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     populated = {"model": "a-model", "session_id": "sess-1", "reasoning_effort": "high"}
@@ -7821,7 +7821,7 @@ async def test_delivered_envelope_preserves_payload_keys_and_empty_lists(
 ):
     # Only meta slims: raw_response stays verbatim (apply_detail's guarantee) and the
     # top-level arrays stay iterable.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -7838,7 +7838,7 @@ async def test_sync_and_replayed_envelopes_agree_on_meta_keys(clean_env, tmp_pat
     # Sync delivery and a later kimi_job_result read share _finished_job_envelope, so
     # their meta key sets must match — the property that lets the persisted shape stay
     # full while the wire shape is slim.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -7857,7 +7857,7 @@ async def test_stored_result_json_still_retains_null_meta_keys(clean_env, tmp_pa
     # The persisted format is deliberately unchanged (no RESULT_FORMAT bump): slimming
     # is wire-only, so an older stored payload stays readable and result.json keeps its
     # forensic detail. If this fails, the change leaked into the writer.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     envelope = _consult_success_envelope(str(tmp_path))
     monkeypatch.setattr(server, "_worker_cmd", _fake_worker_cmd(envelope))
@@ -7922,7 +7922,7 @@ def _spec_meta_worker_cmd(tool: str = "kimi_consult", **payload):
             "import json,os,pathlib,sys;"
             "d=pathlib.Path(sys.argv[1]);"
             "spec=json.loads((d/'spec.json').read_text());"
-            "from kimi_in_claude._worker import _meta_from_spec;"
+            "from moonbridge._worker import _meta_from_spec;"
             "env={'ok':True,'tool':sys.argv[2],"
             "'raw_response':{'text':None,'session_id':None,'model':None},"
             "'meta':_meta_from_spec(spec).model_dump(mode='json')};"
@@ -7940,7 +7940,7 @@ async def test_delivered_sync_consult_success_carries_roots_source(
     clean_env, tmp_path, monkeypatch
 ):
     # The regression the issue names: a PAID success delivered to the caller.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     monkeypatch.setattr(
         server,
@@ -7957,7 +7957,7 @@ async def test_delivered_sync_consult_success_carries_roots_source(
 async def test_delivered_sync_consult_reports_probe_failure(clean_env, tmp_path, monkeypatch):
     # The three states must be distinguishable on the delivered envelope, not just at
     # prep time — a transient probe failure is the one a caller can act on by retrying.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     monkeypatch.setattr(
         server,
@@ -7975,7 +7975,7 @@ async def test_fetched_async_result_carries_originating_roots_source(
 ):
     # A retrieved job result reports the ORIGINATING run's provenance, like meta.tier —
     # NOT the roots state of the connection doing the fetching.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "state"))
     _no_kimi_sentinel(monkeypatch)
     monkeypatch.setattr(
         server,
@@ -8244,7 +8244,7 @@ async def test_oversized_whitespace_is_too_large_not_blank(clean_env, tmp_path, 
     `kimi_delegate_dry_run`'s inline path — so covering one helper would leave the other
     two free to drift (Kimi review of this branch)."""
     monkeypatch.setattr(server.worktree, "ensure_repo_with_head", lambda *a, **k: None)
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     res = await getattr(server, tool)(" " * 2000, workspace_root=str(tmp_path))
     assert res["error"]["code"] == "input_too_large"
 
@@ -8287,7 +8287,7 @@ def test_status_reports_a_refused_passthrough(monkeypatch, clean_env):
     surface that as invalid rather than silently reporting zero options as healthy."""
     monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
     monkeypatch.setattr(server.kimi, "login_status", lambda: (True, "auth."))
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-p sneaky")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-p sneaky")
     res = server.kimi_status()
     assert res["extra_args_configured"] is True
     assert res["extra_args_valid"] is False

@@ -1,11 +1,11 @@
 {
-  "name": "kimi-in-claude",
+  "name": "moonbridge",
   "owner": {
     "name": "Brian Connelly"
   },
   "plugins": [
     {
-      "name": "kimi-in-claude",
+      "name": "moonbridge",
       "source": "./",
       "description": "Call Kimi Code from Claude Code for delegation, review, and second opinions."
     }

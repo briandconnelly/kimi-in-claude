@@ -3,7 +3,7 @@ description: Preview what a Kimi review would send — scope, diff size, redacti
 argument-hint: "[working_tree|branch <base>|commit <sha>]"
 ---
 
-Call the `kimi_dry_run` MCP tool from the kimi-in-claude server (free — no model
+Call the `kimi_dry_run` MCP tool from the moonbridge server (free — no model
 call) to preview what a `kimi_review_changes` call would send.
 
 Scope request: $ARGUMENTS

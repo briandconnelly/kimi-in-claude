@@ -16,7 +16,7 @@ from typing import ClassVar
 
 import pytest
 
-from kimi_in_claude import param_contracts, server
+from moonbridge import param_contracts, server
 
 
 def test_registry_is_nonempty_and_well_formed():

@@ -12,13 +12,12 @@ Closes #
 - [ ] The gate passes — see [AGENTS.md → Tooling](../AGENTS.md#tooling). (If this PR touches
       `.github/workflows/`, the Actions-pinning check too.)
 - [ ] If the agent-visible MCP surface changed — any category in `FINGERPRINT_COVERS`
-      (`src/kimi_in_claude/schemas.py`) — `FINGERPRINT` was bumped, the manifest snapshot
+      (`src/moonbridge/schemas.py`) — `FINGERPRINT` was bumped, the manifest snapshot
       regenerated, and `CHANGELOG.md` updated. Whether the change is *also* breaking is a separate
       call: see AGENTS.md → Versioning.
 - [ ] If the CLI contract changed, `cli_contract.py` and `COMPATIBILITY.md` were updated.
-- [ ] On a release: version bumped together across `pyproject.toml`, `.claude-plugin/plugin.json`,
-      the `@vX.Y.Z` tag pinned in `.mcp.json`, and `CHANGELOG.md` — and the matching `vX.Y.Z` tag
-      pushed to the remote, or `.mcp.json` resolves to nothing for every user.
+- [ ] On a release: followed [the release runbook](../docs/RELEASING.md) end to end, including
+      pushing the `vX.Y.Z` tag — an unpushed tag leaves `.mcp.json` unresolvable for every user.
 
 ## Notes for reviewers
 

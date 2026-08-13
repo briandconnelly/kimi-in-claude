@@ -57,7 +57,7 @@ def test_site_list_matches_the_authoritative_rule():
     fell out of enforcement entirely. Equality makes dropping a site a failure, and makes
     adding one to the RULE fail until it is enforced here too.
     """
-    contract = (_REPO_ROOT / "src/kimi_in_claude/cli_contract.py").read_text(encoding="utf-8")
+    contract = (_REPO_ROOT / "src/moonbridge/cli_contract.py").read_text(encoding="utf-8")
     rule = contract.split("# RULE:", 1)[1].split("\n\n", 1)[0]
 
     # How each RULE mention maps to the file that must carry the disclosure.

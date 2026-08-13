@@ -5,8 +5,8 @@ Conventions for any agent (or human) working in this repository.
 ## What this is
 
 A Claude Code and Codex plugin that calls the Kimi Code CLI via an MCP server. The Python package
-is `kimi_in_claude` under `src/`. Generic, CLI-agnostic machinery lives in
-`kimi_in_claude/_core/` and is designed for later extraction into a shared `agent-bridge`
+is `moonbridge` under `src/`. Generic, CLI-agnostic machinery lives in
+`moonbridge/_core/` and is designed for later extraction into a shared `agent-bridge`
 package.
 
 - **Rule:** `_core` must never import from its parent package (one-way dependency; this is what
@@ -34,27 +34,28 @@ package.
   is a local convenience; CI (`test.yml`) remains the authoritative gate and does not run the
   builtin file-hygiene hooks.
 - When changing the allowed commit types or scopes, update `scripts/check_commit_message.py` and
-  the Git/PRs section below in the same change — they mirror each other.
+  [CONTRIBUTING.md → Conventions](CONTRIBUTING.md#conventions) in the same change — they mirror
+  each other.
 
 ## The CLI contract
 
-Every assumption about the `kimi` CLI lives in `src/kimi_in_claude/cli_contract.py` — flags,
+Every assumption about the `kimi` CLI lives in `src/moonbridge/cli_contract.py` — flags,
 sandbox values, version, drift/auth signatures. Guarantee-bearing flags (`ALWAYS_SEND_FLAGS`) are
 sent unconditionally and, if rejected, fail loudly as `cli_contract_changed` (zero spend).
 Depth-only flags (`HELP_GATED_FLAGS`) are feature-detected and dropped gracefully. When a new
 upstream `kimi` minor appears, or the supported version set changes, follow
-`docs/UPGRADING-KIMI.md` — it owns the multi-step procedure, which is more than a one-file edit.
-`COMPATIBILITY.md` explains what each guarantee is for.
+[docs/UPGRADING-KIMI.md](docs/UPGRADING-KIMI.md) — it owns the multi-step procedure, which is more
+than a one-file edit. [COMPATIBILITY.md](COMPATIBILITY.md) explains what each guarantee is for.
 
 ## The result contract
 
-All tools return the envelope in `src/kimi_in_claude/schemas.py`. Bump `FINGERPRINT` whenever the
+All tools return the envelope in `src/moonbridge/schemas.py`. Bump `FINGERPRINT` whenever the
 agent-visible surface changes — any externally observable change to a category in
 `FINGERPRINT_COVERS` (same file; the Versioning section has the decision rules). A
 committed manifest snapshot (`tests/fixtures/manifest_snapshot.json`, guarded by
 `tests/test_manifest.py`) fails CI on any covered change, so the change can't land unreviewed: the
 failure directs you to regenerate the fixture
-(`uv run python -m kimi_in_claude.manifest > tests/fixtures/manifest_snapshot.json`) and bump
+(`uv run python -m moonbridge.manifest > tests/fixtures/manifest_snapshot.json`) and bump
 `FINGERPRINT` in the same commit. The snapshot is an **acknowledgment guard** — it surfaces the
 drift for review; it does not mechanically force the bump (the snapshot and `FINGERPRINT` are
 independently editable, so bumping remains review policy). Record the change in `CHANGELOG.md`.
@@ -76,7 +77,8 @@ Each skill's own description owns *when* it applies — consult it rather than r
 here. A Claude Code session surfaces these automatically; naming them keeps the expectation explicit
 and reachable by any harness that reads this file.
 
-Architectural decisions that affect the agent-visible surface are recorded in `docs/adr/`.
+Architectural decisions that affect the agent-visible surface are recorded in
+[docs/adr/](docs/adr/README.md), which indexes them. ADRs are decision history, not current policy.
 
 ## Versioning
 
@@ -85,12 +87,13 @@ Architectural decisions that affect the agent-visible surface are recorded in `d
   changes are majors.
 - Every change is judged on **two independent questions**:
   - **Bumps `FINGERPRINT`?** Yes for any *externally observable* change to a category in
-    `FINGERPRINT_COVERS` (`src/kimi_in_claude/schemas.py`) — the discovered value, shape, or
+    `FINGERPRINT_COVERS` (`src/moonbridge/schemas.py`) — the discovered value, shape, or
     documented meaning of anything in that tuple. Reference the tuple by name rather than
     re-listing its categories in prose — in this document or **any other doc, template, or comment
     in the repo** (a re-listing drifting out of sync with the code is the exact bug this rule
     exists to prevent, and it has happened: #227 removed one such copy here, while copies in
-    `CONTRIBUTING.md`, `docs/UPGRADING-KIMI.md`, and the PR template survived and went stale).
+    `CONTRIBUTING.md`, [docs/UPGRADING-KIMI.md](docs/UPGRADING-KIMI.md), and the PR template
+    survived and went stale).
     A refactor that leaves the discovered surface byte-identical does not bump it. Coverage is
     over *contract* semantics, not *release* identity: the per-category carve-outs live on the
     tuple itself and are disclosed to clients on `fingerprint_covers`, which is why an ordinary
@@ -152,15 +155,16 @@ deliberate: update the classifiers, the CI matrix, and `requires-python` togethe
 ## Project status
 
 **Installed from a pinned git tag.** The repo is public at
-`https://github.com/briandconnelly/kimi-in-claude`. The plugin is not published to PyPI, so
+`https://github.com/briandconnelly/moonbridge`. The plugin is not published to PyPI, so
 `.mcp.json` installs it with `uvx --from git+<remote>@v<version>` pinned to a release tag. The
 marketplace manifest is separate and still installs from a local checkout (`source: "./"`).
 
-A release therefore moves the package and both plugin-manifest versions, the tag pinned in
-`.mcp.json`, and the `v<version>` tag pushed to the remote. `tests/test_packaging.py` guards the
-file-backed values against drift. Nothing can guard the pushed tag from inside the repo — an unpushed tag makes
-`.mcp.json` unresolvable for every user but leaves the working tree green, so push the tag as part
-of the release, not after it. There is no issue-claim protocol.
+A release therefore moves several version-bearing files and the remote tag together. The ordered
+procedure lives in [docs/RELEASING.md](docs/RELEASING.md), which owns it — follow that runbook
+rather than working from memory. `tests/test_packaging.py` guards the file-backed values against
+drift, but nothing inside the repo can guard the pushed tag: an unpushed tag makes `.mcp.json`
+unresolvable for every user while leaving the working tree green, so push it as part of the
+release, not after it. There is no issue-claim protocol.
 
 ## The safety model, in one place
 
@@ -174,15 +178,16 @@ matters when you change anything in `runspace.py`, `kimi.py`, or `cli_contract.p
   to. Never describe it as containment, in code comments or in docs.
 
 Read-only prevents modification, not disclosure — kimi's Read tool takes absolute paths.
-`COMPATIBILITY.md` lists every non-guarantee; `docs/UPGRADING-KIMI.md` lists the probes that must
-be re-run before trusting any of this against a new kimi version.
+[COMPATIBILITY.md](COMPATIBILITY.md) lists every non-guarantee;
+[docs/UPGRADING-KIMI.md](docs/UPGRADING-KIMI.md) lists the probes that must be re-run before
+trusting any of this against a new kimi version.
 
 ## Verification expectations
 
 Claims in this repo are meant to be traceable to a probe. When you add or change one:
 
 - Behavioral claims about the `kimi` CLI go in `cli_contract.py` with the captured evidence
-  referenced, and the capture lands in `docs/kimi-help/<version>/`.
+  referenced, and the capture lands in [docs/kimi-help/](docs/kimi-help/) under `<version>/`.
 - Failure-signature patterns use **captured** message text. A classifier tuned to an invented
   phrasing passes its tests and misclassifies in production.
 - Before trusting a negative result (no findings, no matches, a clean sweep), confirm the same

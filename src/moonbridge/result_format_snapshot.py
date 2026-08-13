@@ -25,8 +25,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from kimi_in_claude.errors import make_error, serialize_error
-from kimi_in_claude.schemas import (
+from moonbridge.errors import make_error, serialize_error
+from moonbridge.schemas import (
     FINGERPRINT,
     RESULT_FORMAT,
     ConsultResult,

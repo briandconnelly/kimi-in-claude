@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kimi_in_claude import config
+from moonbridge import config
 
 PARAMS_RESOURCE_URI = "kimi://params"
 
@@ -62,7 +62,7 @@ _IDEMPOTENCY_FULL = (
 _REASONING_EFFORT_FULL = (
     "Override the Kimi reasoning effort for this call (sent as a "
     "`model_reasoning_effort` config override); omit (or pass null) for the server "
-    "default (KIMI_IN_CLAUDE_REASONING_EFFORT) or Kimi's own resolution. An open "
+    "default (MOONBRIDGE_REASONING_EFFORT) or Kimi's own resolution. An open "
     "per-model string the Kimi backend validates at run time — commonly "
     "minimal|low|medium|high|xhigh; kimi_models lists each model's advertised set "
     "(advisory). A backend-rejected value fails as invalid_reasoning_effort (repair steers "
@@ -70,7 +70,7 @@ _REASONING_EFFORT_FULL = (
     "never treated as unset. Control characters, surrogates, and values over "
     f"{config.REASONING_EFFORT_MAX_LENGTH} chars in this per-call argument are rejected at "
     "the MCP boundary as invalid_arguments; the same hostile shape in the resolved "
-    "KIMI_IN_CLAUDE_REASONING_EFFORT default — which never crosses that boundary — is "
+    "MOONBRIDGE_REASONING_EFFORT default — which never crosses that boundary — is "
     "instead refused pre-spend as invalid_reasoning_effort (repair: correct the config; "
     "zero spend, the value never reaches kimi)."
 )
@@ -107,7 +107,7 @@ PARAMETER_CONTRACTS: dict[str, ParamContract] = {
         summary=(
             "Override the Kimi reasoning effort for this call (a model_reasoning_effort "
             "override); omit or pass null for the server default "
-            "(KIMI_IN_CLAUDE_REASONING_EFFORT) or Kimi's own resolution. An open, "
+            "(MOONBRIDGE_REASONING_EFFORT) or Kimi's own resolution. An open, "
             "per-model string the backend validates at run time — commonly "
             "minimal|low|medium|high|xhigh; kimi_models lists each model's advertised "
             "set (advisory). Rejection and bounds detail: kimi://params."

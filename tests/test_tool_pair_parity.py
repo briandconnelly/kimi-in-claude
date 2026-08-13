@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from kimi_in_claude import server
+from moonbridge import server
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ async def test_delegate_pair_spec_parity(clean_env, tmp_path, monkeypatch, captu
 
 
 async def test_consult_pair_input_too_large_parity(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     kw = dict(workspace_root=str(tmp_path), extra_context="y" * 2000)
     sync = await server.kimi_consult("q", **kw)
     asyncr = await server.kimi_consult_async("q", **kw)
@@ -106,7 +106,7 @@ async def test_consult_pair_input_too_large_parity(clean_env, tmp_path, monkeypa
 
 async def test_delegate_pair_input_too_large_parity(clean_env, tmp_path, monkeypatch):
     _no_git_preflight(monkeypatch)
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     kw = dict(workspace_root=str(tmp_path))
     sync = await server.kimi_delegate("t" * 2000, **kw)
     asyncr = await server.kimi_delegate_async("t" * 2000, **kw)
@@ -137,7 +137,7 @@ async def test_pair_workspace_error_parity(clean_env, sync_tool, async_tool, arg
 async def test_consult_workspace_error_beats_input_too_large(clean_env, monkeypatch):
     # Workspace resolution runs before the input-size check: a bad workspace wins even
     # when the input is also oversized. Pinned for both variants.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     big = "y" * 2000
     for tool in ("kimi_consult", "kimi_consult_async"):
         res = await getattr(server, tool)("q", workspace_root="relative", extra_context=big)
@@ -147,8 +147,8 @@ async def test_consult_workspace_error_beats_input_too_large(clean_env, monkeypa
 async def test_delegate_placeholder_beats_input_too_large(clean_env, tmp_path, monkeypatch):
     # The env-placeholder guard runs before the task-size check.
     _no_git_preflight(monkeypatch)
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MODEL", "${MODEL}")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     for tool in ("kimi_delegate", "kimi_delegate_async"):
         res = await getattr(server, tool)("t" * 2000, workspace_root=str(tmp_path))
         assert res["error"]["code"] == "unexpanded_env_placeholder"
@@ -190,7 +190,7 @@ async def test_delegate_input_too_large_beats_git_preflight(clean_env, tmp_path,
         raise AssertionError("git preflight must not run when the task is already too large")
 
     monkeypatch.setattr(server.worktree, "ensure_repo_with_head", boom)
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "1000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "1000")
     for tool in ("kimi_delegate", "kimi_delegate_async"):
         res = await getattr(server, tool)("t" * 2000, workspace_root=str(tmp_path))
         assert res["error"]["code"] == "input_too_large"

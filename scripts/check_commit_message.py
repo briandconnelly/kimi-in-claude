@@ -3,7 +3,8 @@
 
 Run as a ``commit-msg`` hook (see ``prek.toml``): Git/prek passes the path to the
 file holding the commit message as the first argument. The allowed types and
-optional scopes mirror ``AGENTS.md`` — when that policy changes, update both.
+optional scopes mirror ``CONTRIBUTING.md`` section Conventions — when that policy
+changes, update both.
 
 Pure stdlib (no deps): the hook must run in any environment without setup.
 
@@ -21,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-# Conventional Commit types allowed by AGENTS.md.
+# Conventional Commit types allowed by CONTRIBUTING.md section Conventions.
 ALLOWED_TYPES = (
     "feat",
     "fix",
@@ -34,7 +35,7 @@ ALLOWED_TYPES = (
     "build",
     "revert",
 )
-# Optional scopes from the codebase areas listed in AGENTS.md.
+# Optional scopes listed in CONTRIBUTING.md section Conventions.
 ALLOWED_SCOPES = (
     "jobs",
     "cli-contract",

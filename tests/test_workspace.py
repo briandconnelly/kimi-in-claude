@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kimi_in_claude._core import workspace
+from moonbridge._core import workspace
 
 
 def test_resolve_explicit_param(tmp_path):

@@ -27,15 +27,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from kimi_in_claude._core import gitdiff, gitproc
-from kimi_in_claude._core.redaction import redact_text
+from moonbridge._core import gitdiff, gitproc
+from moonbridge._core.redaction import redact_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
 # mkdtemp prefix for the throwaway worktree's parent dir. Exposed so a job runner
 # can constrain its cleanup to this temp area (see jobs.JobStore cleanup_prefix).
-WORKTREE_PREFIX = "cic-worktree-"
+WORKTREE_PREFIX = "moonbridge-worktree-"
 
 # Per-line cap for plan()'s streamed inventory counts (ls-tree / diff --numstat). Each
 # line's counted/summed fields precede the pathname, so even a pathologically long path
@@ -553,9 +553,9 @@ def _seed_uncommitted(repo: str, wt: str, timeout: int) -> str | None:
         wt,
         [
             "-c",
-            "user.email=kimi-in-claude@local",
+            "user.email=moonbridge@local",
             "-c",
-            "user.name=kimi-in-claude",
+            "user.name=moonbridge",
             "commit",
             "--quiet",
             "--no-verify",
@@ -587,7 +587,7 @@ _ARTIFACT_EXCLUDES = (
     # work, so they must never appear in a diff offered to the caller for review. The
     # literal is duplicated from cli_contract.HANDSHAKE_DIR_NAME because _core must not
     # import the parent package; tests/test_runspace.py asserts the two stay in step.
-    ":(exclude,glob)**/.kimi-in-claude/**",
+    ":(exclude,glob)**/.moonbridge/**",
     ":(exclude,glob)**/__pycache__/**",
     ":(exclude,glob)**/*.py[co]",
     ":(exclude,glob)**/.pytest_cache/**",

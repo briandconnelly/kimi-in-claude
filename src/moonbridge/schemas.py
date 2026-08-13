@@ -9,8 +9,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
-from kimi_in_claude import __version__
-from kimi_in_claude._core.jobs import DEFAULT_POLL_AFTER_MS
+from moonbridge import __version__
+from moonbridge._core.jobs import DEFAULT_POLL_AFTER_MS
 
 # The agent-visible surface the FINGERPRINT covers, as granular machine-readable
 # identifiers. This tuple is the single source of truth: CapabilitiesResult.fingerprint_covers
@@ -68,7 +68,7 @@ _FINGERPRINT_COVERS_DESC = (
 # this and regenerate the fixture in the same commit. It is an acknowledgment guard — it surfaces
 # the drift, it does not mechanically force the integer bump (the snapshot and this string are
 # independently editable).
-FINGERPRINT = "kimi-in-claude/0.1/schema-1"
+FINGERPRINT = "moonbridge/0.1/schema-1"
 
 # The persisted result-format version, stamped into each job record's generic metadata
 # (`extra.result_format`) at spawn so replay can tell a cross-release payload from a corrupt
@@ -134,7 +134,7 @@ def _server_version_field() -> Any:
     return Field(
         default_factory=lambda: __version__,
         description=(
-            "kimi-in-claude package version attributed to this result. A replayed done-job "
+            "moonbridge package version attributed to this result. A replayed done-job "
             "result preserves the version of the run that produced it; every freshly built "
             "envelope reports the responding server. Omitted entirely when a stored payload "
             "predates this field — never backfilled, and never sent as null."
@@ -378,7 +378,7 @@ ErrorCode = Literal[
     # contract drifted and the plugin likely needs an update.
     "cli_contract_changed",
     # The reasoning_effort this run requested through the plugin's first-class
-    # controls (the per-call parameter or KIMI_IN_CLAUDE_REASONING_EFFORT) was
+    # controls (the per-call parameter or MOONBRIDGE_REASONING_EFFORT) was
     # rejected — a caller/operator value to correct, NOT a plugin contract drift.
     # Two emitters: the plugin's pre-spend shape bounds (an argv-hostile value —
     # oversized or control characters — refused before any subprocess, zero spend),
@@ -388,7 +388,7 @@ ErrorCode = Literal[
     "invalid_reasoning_effort",
     "invalid_model",
     "empty_response",
-    # kimi rejected an operator-supplied KIMI_IN_CLAUDE_EXTRA_ARGS passthrough entry
+    # kimi rejected an operator-supplied MOONBRIDGE_EXTRA_ARGS passthrough entry
     # (an unaccepted option / config key / profile). Operator config to fix, NOT a
     # plugin contract drift — kept distinct from cli_contract_changed so the fail-loud
     # contract signal is not muddied by user-owned passthrough (#231).
@@ -678,7 +678,7 @@ class Meta(BaseModel):
         description=(
             "The model slug requested through the plugin's first-class controls for the Kimi "
             "run this envelope describes — the per-call `model` parameter or the server's "
-            "KIMI_IN_CLAUDE_MODEL default. On success envelopes it is also mirrored to "
+            "MOONBRIDGE_MODEL default. On success envelopes it is also mirrored to "
             "raw_response.model. It is override provenance, not backend attestation: ABSENT "
             "OR null means model selection happened outside those controls (Kimi's own "
             "default, the operator's config.toml, or an opaque --profile), and the plugin "
@@ -696,7 +696,7 @@ class Meta(BaseModel):
         description=(
             "The reasoning effort requested through the plugin's first-class controls for "
             "the Kimi run this envelope describes — the per-call `reasoning_effort` "
-            "parameter or the server's KIMI_IN_CLAUDE_REASONING_EFFORT default, sent to "
+            "parameter or the server's MOONBRIDGE_REASONING_EFFORT default, sent to "
             "kimi as a `model_reasoning_effort` config override. Like meta.model it is "
             "override provenance, not backend attestation: ABSENT OR null means effort "
             "resolution happened outside those controls (Kimi's own default, the operator's "
@@ -1140,7 +1140,7 @@ class StatusResult(BaseModel):
     flags_warning: str | None = None  # a guarantee-bearing flag missing from --help
     ready: bool = False  # found AND authenticated
     readiness_detail: str
-    # Operator passthrough (KIMI_IN_CLAUDE_EXTRA_ARGS, #231). Presence + option count +
+    # Operator passthrough (MOONBRIDGE_EXTRA_ARGS, #231). Presence + option count +
     # validity ONLY — never the raw tokens/values (a `-c` value can hold a secret).
     # extra_args_valid is False when the knob is set but fails parse/allowlist, so every
     # paid call is guaranteed to preflight-fail even though `ready` may be True.

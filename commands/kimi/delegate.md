@@ -4,7 +4,7 @@ argument-hint: "<task description>"
 ---
 
 Delegate a coding task to Kimi Code using the `kimi_delegate` MCP tool from the
-kimi-in-claude server.
+moonbridge server.
 
 Task: $ARGUMENTS
 

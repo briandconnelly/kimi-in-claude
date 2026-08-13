@@ -9,11 +9,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from kimi_in_claude import cli_contract
-from kimi_in_claude._core import redaction, worktree
-from kimi_in_claude._core.jobs import JobStore
+from moonbridge import cli_contract
+from moonbridge._core import redaction, worktree
+from moonbridge._core.jobs import JobStore
 
-ENV_PREFIX = "KIMI_IN_CLAUDE_"
+ENV_PREFIX = "MOONBRIDGE_"
 
 MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 10, 600
 DEFAULT_TIMEOUT_SECONDS = 300
@@ -80,7 +80,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Shape bounds for a reasoning-effort VALUE (#309), shared by the MCP params (which
 # advertise and enforce them at the call boundary) and the pre-spend check on the
-# resolved value — the only guard the KIMI_IN_CLAUDE_REASONING_EFFORT env default
+# resolved value — the only guard the MOONBRIDGE_REASONING_EFFORT env default
 # passes through, since env config never crosses the MCP boundary. The set stays open
 # (the backend judges the value); these exclude only argv/serialization-hostile
 # shapes: a NUL breaks Popen outright, other control characters have no place in a
@@ -143,7 +143,7 @@ def is_env_placeholder(value: str | None) -> bool:
 
 
 def placeholder_env_vars() -> list[str]:
-    """Names of tracked `KIMI_IN_CLAUDE_*` env vars left as unexpanded `${...}`."""
+    """Names of tracked `MOONBRIDGE_*` env vars left as unexpanded `${...}`."""
     return sorted(
         name
         for name, value in os.environ.items()
@@ -157,7 +157,7 @@ ENV_PLACEHOLDER_REPAIR = (
 )
 
 
-# --- Opt-in extra `kimi` args passthrough (KIMI_IN_CLAUDE_EXTRA_ARGS, #231) ----
+# --- Opt-in extra `kimi` args passthrough (MOONBRIDGE_EXTRA_ARGS, #231) ----
 # An operator-only knob to add extra global `kimi` options to every PAID exec
 # invocation (consult/review/delegate) — its motivating use is selecting a
 # model_provider/profile when isolation sends --ignore-user-config (which drops the
@@ -167,7 +167,7 @@ ENV_PLACEHOLDER_REPAIR = (
 # prompt, hollowing out the fail-loud CLI contract.
 EXTRA_ARGS_ENV = f"{ENV_PREFIX}EXTRA_ARGS"
 
-# --- KIMI_IN_CLAUDE_EXTRA_ARGS -----------------------------------------------------------
+# --- MOONBRIDGE_EXTRA_ARGS -----------------------------------------------------------
 # There is currently NO safe operator passthrough for kimi, so the allowlist is empty and
 # any configured value is refused with an explanation.
 #
@@ -207,7 +207,7 @@ NO_PASSTHROUGH_REASON = (
 
 @dataclass(frozen=True)
 class ExtraArgs:
-    """Parsed KIMI_IN_CLAUDE_EXTRA_ARGS. `tokens` is the validated argv to inject
+    """Parsed MOONBRIDGE_EXTRA_ARGS. `tokens` is the validated argv to inject
     (may carry secret `-c` VALUES — never echo it). `descriptors` are sanitized
     identifiers (allowlisted flag names, config KEYS, profile/feature NAMES — never a
     `-c` value) safe to surface in kimi_status / an error envelope and to match against
@@ -233,7 +233,7 @@ def _safe_token(token: str) -> str:
 
 
 def _parse_extra_args(raw: str) -> ExtraArgs:
-    """Validate a non-blank KIMI_IN_CLAUDE_EXTRA_ARGS value — which always means rejecting it.
+    """Validate a non-blank MOONBRIDGE_EXTRA_ARGS value — which always means rejecting it.
 
     kimi exposes no option this server can safely pass through (see NO_PASSTHROUGH_REASON),
     so there is nothing to allowlist and this reduces to "any token is refused". It stays a
@@ -253,7 +253,7 @@ def _parse_extra_args(raw: str) -> ExtraArgs:
 
 
 def extra_args() -> ExtraArgs:
-    """Resolve KIMI_IN_CLAUDE_EXTRA_ARGS. Blank/unset → an empty, valid ExtraArgs."""
+    """Resolve MOONBRIDGE_EXTRA_ARGS. Blank/unset → an empty, valid ExtraArgs."""
     raw = os.environ.get(EXTRA_ARGS_ENV)
     if raw is None or not raw.strip():
         return ExtraArgs()
@@ -344,7 +344,7 @@ def skills_dir_for(isolation: str) -> str | None:
 def supported_versions() -> frozenset[tuple[int, int]]:
     """The `kimi` (major, minor) versions this server is built against.
 
-    Overridable via KIMI_IN_CLAUDE_SUPPORTED_VERSIONS (comma-separated
+    Overridable via MOONBRIDGE_SUPPORTED_VERSIONS (comma-separated
     "major.minor"). Any parse error falls back to the built-in set."""
     raw = os.environ.get(cli_contract.SUPPORTED_VERSIONS_ENV)
     if not raw:
@@ -401,7 +401,7 @@ def state_dir() -> Path:
         return Path(override).expanduser()
     base = os.environ.get("XDG_CACHE_HOME")
     root = Path(base).expanduser() if base else Path.home() / ".cache"
-    return root / "kimi-in-claude" / "jobs"
+    return root / "moonbridge" / "jobs"
 
 
 def rate_limit_stale_seconds() -> int:

@@ -10,9 +10,52 @@ from pathlib import Path
 import pytest
 import yaml
 
-from kimi_in_claude import __version__, server
+from moonbridge import __version__, server
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_project_identity_is_moonbridge():
+    """All distributable identities use the Moonbridge name."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert pyproject["project"]["name"] == "moonbridge"
+    assert pyproject["project"]["scripts"] == {"moonbridge-mcp": "moonbridge.server:main"}
+
+    for relpath in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
+        assert _load_json(relpath)["name"] == "moonbridge"
+
+    assert set(_load_json(".mcp.json")["mcpServers"]) == {"moonbridge"}
+
+
+def test_legacy_project_identity_is_absent_from_current_text():
+    """The pre-release rename is a clean break, without compatibility aliases."""
+    legacy_identities = (
+        "kimi" + "-in-claude",
+        "kimi" + "_in_claude",
+        "KIMI" + "_IN_CLAUDE",
+    )
+    text_suffixes = {".json", ".lock", ".md", ".py", ".toml", ".yaml", ".yml"}
+    ignored_parts = {
+        ".claude",  # harness-local settings, not distributed repository content
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+    }
+
+    stale: list[str] = []
+    for path in ROOT.rglob("*"):
+        if not path.is_file() or path.suffix not in text_suffixes:
+            continue
+        if ignored_parts.intersection(path.relative_to(ROOT).parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(identity in text for identity in legacy_identities):
+            stale.append(str(path.relative_to(ROOT)))
+
+    assert stale == []
 
 
 def _load_json(rel: str) -> dict:
@@ -88,7 +131,7 @@ def test_operating_system_classifiers_declare_posix_only():
 
 def test_plugin_manifest_valid_and_versioned():
     manifest = _load_json(".claude-plugin/plugin.json")
-    assert manifest["name"] == "kimi-in-claude"
+    assert manifest["name"] == "moonbridge"
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert manifest["version"] == pyproject["project"]["version"]
 
@@ -99,7 +142,7 @@ def test_codex_plugin_manifest_valid_versioned_and_reuses_portable_components():
     claude = _load_json(".claude-plugin/plugin.json")
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
-    assert codex["name"] == "kimi-in-claude"
+    assert codex["name"] == "moonbridge"
     assert codex["version"] == pyproject["project"]["version"]
     assert codex["skills"] == claude["skills"] == "./skills/"
     assert codex["mcpServers"] == claude["mcpServers"] == "./.mcp.json"
@@ -334,7 +377,7 @@ def test_tool_error_codes_cover_every_tool_and_are_valid():
     """Each advertised tool has an error-code list, and every code is a real ErrorCode."""
     from typing import get_args
 
-    from kimi_in_claude.schemas import ErrorCode
+    from moonbridge.schemas import ErrorCode
 
     caps = server.kimi_capabilities()
     advertised = set(caps["active_tools"]) | set(caps["free_tools"])
@@ -353,12 +396,12 @@ def test_delegate_async_command_present():
 # --------------------------------------------------------------------------- #
 # Distribution: a pinned git tag
 # --------------------------------------------------------------------------- #
-# kimi-in-claude is not published to PyPI, so .mcp.json installs it from the public
+# moonbridge is not published to PyPI, so .mcp.json installs it from the public
 # GitHub remote at a pinned tag instead. The marketplace manifest is unaffected: it
 # still installs from a local checkout, and only the MCP server launch resolves
 # remotely.
 
-GIT_SOURCE = "git+https://github.com/briandconnelly/kimi-in-claude.git"
+GIT_SOURCE = "git+https://github.com/briandconnelly/moonbridge.git"
 
 
 def test_marketplace_manifest_installs_from_this_checkout():
@@ -366,18 +409,18 @@ def test_marketplace_manifest_installs_from_this_checkout():
     `/plugin marketplace add <this directory>`. Its source stays "./" — pointing it at a
     git URL would advertise a distribution that does not exist yet."""
     manifest = _load_json(".claude-plugin/marketplace.json")
-    assert manifest["name"] == "kimi-in-claude"
+    assert manifest["name"] == "moonbridge"
     plugins = manifest["plugins"]
-    assert [p["name"] for p in plugins] == ["kimi-in-claude"]
+    assert [p["name"] for p in plugins] == ["moonbridge"]
     assert plugins[0]["source"] == "./"
 
 
 def test_codex_marketplace_manifest_installs_from_this_checkout():
     """The repo itself is a Codex marketplace, with the plugin at its root."""
     manifest = _load_json(".agents/plugins/marketplace.json")
-    assert manifest["name"] == "kimi-in-claude"
+    assert manifest["name"] == "moonbridge"
     plugins = manifest["plugins"]
-    assert [plugin["name"] for plugin in plugins] == ["kimi-in-claude"]
+    assert [plugin["name"] for plugin in plugins] == ["moonbridge"]
     assert plugins[0]["source"] == {"source": "local", "path": "./"}
     assert plugins[0]["policy"] == {
         "installation": "AVAILABLE",
@@ -415,10 +458,10 @@ def test_plugin_copy_describes_worktrees_as_defense_in_depth():
 
 def test_mcp_json_installs_from_the_pinned_git_remote():
     config = json.loads((ROOT / ".mcp.json").read_text())
-    server_config = config["mcpServers"]["kimi-in-claude"]
+    server_config = config["mcpServers"]["moonbridge"]
     assert server_config["command"] == "uvx"
     assert server_config["args"][0] == "--from"
-    assert server_config["args"][-1] == "kimi-in-claude-mcp"
+    assert server_config["args"][-1] == "moonbridge-mcp"
     # No local path may survive the switch. A `--directory` launch silently runs whatever
     # is in the author's working tree, and does not resolve at all on any other machine.
     assert "--directory" not in server_config["args"]
@@ -431,7 +474,7 @@ def test_mcp_json_pins_the_tag_for_the_current_version():
     .mcp.json that installs the PREVIOUS release — a silent downgrade for every
     installed user, with nothing in the launch output to show it happened."""
     config = json.loads((ROOT / ".mcp.json").read_text())
-    args = config["mcpServers"]["kimi-in-claude"]["args"]
+    args = config["mcpServers"]["moonbridge"]["args"]
     ref = args[args.index("--from") + 1]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert ref == f"{GIT_SOURCE}@v{pyproject['project']['version']}"

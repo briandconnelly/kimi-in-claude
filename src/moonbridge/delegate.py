@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from kimi_in_claude import config, prompts, runspace
-from kimi_in_claude._core import redaction, worktree
-from kimi_in_claude.schemas import (
+from moonbridge import config, prompts, runspace
+from moonbridge._core import redaction, worktree
+from moonbridge.schemas import (
     ContextSummary,
     DelegateResult,
     Meta,
@@ -52,7 +52,7 @@ def _bound_diff(diff: str, meta: Meta, max_bytes: int) -> str:
     meta.truncated = True
     meta.truncation_hint = (
         f"diff exceeded {max_bytes} bytes and was truncated; narrow the task to a "
-        "smaller change, or raise KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES to receive it whole"
+        "smaller change, or raise MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES to receive it whole"
     )
     return encoded[:max_bytes].decode("utf-8", "ignore")
 

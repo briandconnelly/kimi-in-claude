@@ -1,13 +1,13 @@
 {
-  "name": "kimi-in-claude",
+  "name": "moonbridge",
   "version": "0.1.0",
   "description": "Call Kimi Code from Codex for delegation, review, and second opinions.",
   "author": {
     "name": "Brian Connelly",
     "url": "https://github.com/briandconnelly"
   },
-  "homepage": "https://github.com/briandconnelly/kimi-in-claude",
-  "repository": "https://github.com/briandconnelly/kimi-in-claude",
+  "homepage": "https://github.com/briandconnelly/moonbridge",
+  "repository": "https://github.com/briandconnelly/moonbridge",
   "license": "MIT",
   "keywords": [
     "kimi",
@@ -20,16 +20,16 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Kimi (for Codex)",
+    "displayName": "Moonbridge (for Codex)",
     "shortDescription": "Delegate to Kimi, review changes, and get second opinions.",
-    "longDescription": "kimi-in-claude lets Codex call the Kimi Code CLI for an independent second opinion, structured code review, and delegated coding tasks. Delegation runs in a throwaway git worktree and returns a reviewable diff that is never applied to your working tree. Because the kimi CLI has no sandbox, consult and review additionally run under a generated agent profile with no shell or write tools.",
+    "longDescription": "moonbridge lets Codex call the Kimi Code CLI for an independent second opinion, structured code review, and delegated coding tasks. Delegation runs in a throwaway git worktree and returns a reviewable diff that is never applied to your working tree. Because the kimi CLI has no sandbox, consult and review additionally run under a generated agent profile with no shell or write tools.",
     "developerName": "Brian Connelly",
     "category": "Developer Tools",
     "capabilities": [
       "MCP",
       "Skills"
     ],
-    "websiteURL": "https://github.com/briandconnelly/kimi-in-claude",
+    "websiteURL": "https://github.com/briandconnelly/moonbridge",
     "defaultPrompt": [
       "Get a second opinion from Kimi on this approach.",
       "Have Kimi review my current changes.",

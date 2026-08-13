@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 
-from kimi_in_claude import cli_contract, kimi
-from kimi_in_claude._core.runtime import CommandRun
-from kimi_in_claude.schemas import Meta
+from moonbridge import cli_contract, kimi
+from moonbridge._core.runtime import CommandRun
+from moonbridge.schemas import Meta
 
 # events string containing a token_count event with a rate_limits block
 _RATE_LIMIT_EVENTS = (
@@ -46,7 +46,7 @@ def _make_exec_result(
 def test_apply_run_meta_leaves_rate_limit_none_even_with_legacy_events(monkeypatch):
     # #321: the exec stream no longer carries quota on kimi 0.144, and we no longer scrape
     # it — meta.rate_limit stays None even with a legacy rate_limits block in the events.
-    from kimi_in_claude import delegate
+    from moonbridge import delegate
 
     meta = _make_meta()
     result = _make_exec_result(events=_RATE_LIMIT_EVENTS, exit_code=0, last_message="done")
@@ -55,7 +55,7 @@ def test_apply_run_meta_leaves_rate_limit_none_even_with_legacy_events(monkeypat
 
 
 def test_apply_run_meta_no_rate_limits_block_leaves_none(monkeypatch):
-    from kimi_in_claude import delegate
+    from moonbridge import delegate
 
     meta = _make_meta()
     result = _make_exec_result(events="", exit_code=0, last_message="done")
@@ -66,7 +66,7 @@ def test_apply_run_meta_no_rate_limits_block_leaves_none(monkeypatch):
 def test_apply_run_meta_clears_model_when_model_flag_dropped(monkeypatch):
     """When --model is dropped by help-gating, meta.model is reconciled to None so
     the delegate result's provenance matches the default model used (#158)."""
-    from kimi_in_claude import delegate
+    from moonbridge import delegate
 
     meta = _make_meta()
     meta.model = "gpt-5.5"
@@ -78,7 +78,7 @@ def test_apply_run_meta_clears_model_when_model_flag_dropped(monkeypatch):
 
 def test_apply_run_meta_preserves_model_when_not_dropped(monkeypatch):
     """A requested model survives when --model was not dropped (#158)."""
-    from kimi_in_claude import delegate
+    from moonbridge import delegate
 
     meta = _make_meta()
     meta.model = "gpt-5.5"
@@ -92,8 +92,8 @@ def test_run_delegate_forwards_on_event(monkeypatch):
 
     import anyio
 
-    from kimi_in_claude import delegate, runspace
-    from kimi_in_claude._core import worktree
+    from moonbridge import delegate, runspace
+    from moonbridge._core import worktree
 
     captured: dict = {}
 
@@ -135,9 +135,9 @@ def test_run_delegate_forwards_on_event(monkeypatch):
 
 async def test_run_delegate_not_a_git_repo(tmp_path, monkeypatch):
     """not_a_git_repo error uses new envelope shape with symbolic next_step."""
-    from kimi_in_claude import delegate
-    from kimi_in_claude._core import worktree
-    from kimi_in_claude.schemas import Meta
+    from moonbridge import delegate
+    from moonbridge._core import worktree
+    from moonbridge.schemas import Meta
 
     meta = Meta(
         cwd=str(tmp_path),
@@ -177,8 +177,8 @@ def test_run_delegate_forwards_reasoning_effort(monkeypatch):
 
     import anyio
 
-    from kimi_in_claude import delegate, runspace
-    from kimi_in_claude._core import worktree
+    from moonbridge import delegate, runspace
+    from moonbridge._core import worktree
 
     captured: dict = {}
 
@@ -224,8 +224,8 @@ def test_run_delegate_reports_a_flag_rejection_as_contract_drift(monkeypatch):
 
     import anyio
 
-    from kimi_in_claude import delegate, runspace
-    from kimi_in_claude._core import worktree
+    from moonbridge import delegate, runspace
+    from moonbridge._core import worktree
 
     rejection = "error: unknown option '--output-format'"
 
@@ -265,8 +265,8 @@ def _run_delegate_with_message(monkeypatch, message: str, *, wt_path: str, diff:
 
     import anyio
 
-    from kimi_in_claude import delegate, runspace
-    from kimi_in_claude._core import worktree
+    from moonbridge import delegate, runspace
+    from moonbridge._core import worktree
 
     removed: list = []
 
@@ -300,7 +300,7 @@ def test_run_delegate_relativizes_worktree_paths_in_summary_and_raw(monkeypatch,
     into it is dead on arrival (#412). Assert the CONTENT changed — asserting only that
     summary and raw_response.text agree would pass against the bug, since both derive from
     the same last_message."""
-    wt = str(tmp_path / "cic-worktree-x" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-x" / "tree")
     message = f"Created [f.md]({wt}/f.md).\n\nFull path: `{wt}/f.md`."
 
     result, removed = _run_delegate_with_message(
@@ -319,7 +319,7 @@ def test_run_delegate_relativizes_worktree_paths_in_summary_and_raw(monkeypatch,
 def test_run_delegate_relativizes_on_the_empty_diff_branch(monkeypatch, tmp_path):
     """The `Kimi made no changes.` branch builds its own summary string; the rewrite must
     already have been applied to the text it wraps."""
-    wt = str(tmp_path / "cic-worktree-y" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-y" / "tree")
     result, _ = _run_delegate_with_message(
         monkeypatch, f"I looked at {wt}/a.py and changed nothing.", wt_path=wt, diff=""
     )
@@ -330,7 +330,7 @@ def test_run_delegate_relativizes_on_the_empty_diff_branch(monkeypatch, tmp_path
 def test_run_delegate_preserves_none_last_message(monkeypatch, tmp_path):
     """A successful run with no final message keeps raw_response.text null — the rewrite
     must not coerce None into a string."""
-    wt = str(tmp_path / "cic-worktree-z" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-z" / "tree")
     result, _ = _run_delegate_with_message(monkeypatch, None, wt_path=wt)
     # No diff AND no summary is an empty result, not a delegation: returning ok=True with
     # a "(no summary)" placeholder would hand the caller an envelope carrying nothing.
@@ -343,7 +343,7 @@ def test_run_delegate_does_not_let_a_secret_ride_on_a_worktree_path(monkeypatch,
     Rewriting the path first would shorten the labelled value below the redactor's 16-char
     floor; the worktree path is visible to Kimi, so an injected task could aim for that
     shape deliberately. The redaction-safe combination lives in worktree.sanitize_prose."""
-    wt = str(tmp_path / "cic-worktree-s" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-s" / "tree")
     result, _ = _run_delegate_with_message(
         monkeypatch, f"Set api_key={wt}/abcdefgh in the config.", wt_path=wt
     )
@@ -355,13 +355,13 @@ def test_run_delegate_does_not_let_a_secret_ride_on_a_worktree_path(monkeypatch,
 def test_run_delegate_survives_crafted_partial_alias_consumption(monkeypatch, tmp_path):
     """Adversarial model output cannot make the redactor eat part of an alias and thereby
     resurrect the dead path (#412 review round 2)."""
-    wt = str(tmp_path / "cic-worktree-c" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-c" / "tree")
     result, _ = _run_delegate_with_message(
         monkeypatch, f"api_key={'A' * 16}=file://{wt}/abcdefgh", wt_path=wt
     )
     assert "abcdefgh" not in result["summary"]
     assert wt not in result["summary"]
-    assert "cic-worktree-" not in result["summary"]
+    assert "moonbridge-worktree-" not in result["summary"]
 
 
 # --- classify_failure error path: worktree paths in delegate error envelopes (#420) --
@@ -380,8 +380,8 @@ def _run_delegate_with_failure(monkeypatch, stderr: str, *, wt_path: str, exit_c
 
     import anyio
 
-    from kimi_in_claude import delegate, runspace
-    from kimi_in_claude._core import worktree
+    from moonbridge import delegate, runspace
+    from moonbridge._core import worktree
 
     async def fake_exec(prompt, **kwargs):
         return kimi.KimiRunResult(
@@ -414,7 +414,7 @@ def test_run_delegate_sanitizes_worktree_path_in_classify_failure_message(monkey
     worktree (Kimi runs with cwd=worktree) must come back relativized, with no absolute
     worktree path, once the worktree is torn down. RED before delegate.py wires
     `sanitize=` into the classify_failure call."""
-    wt = str(tmp_path / "cic-worktree-e" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-e" / "tree")
     stderr = f"error writing {wt}/out.txt (also file://{wt}/out.txt)"
     result = _run_delegate_with_failure(monkeypatch, stderr, wt_path=wt)
     assert result["ok"] is False
@@ -426,17 +426,17 @@ def test_run_delegate_sanitizes_worktree_path_in_classify_failure_message(monkey
 
 def test_run_delegate_classify_failure_survives_partial_alias_consumption(monkeypatch, tmp_path):
     """Ordering attack A end to end through the error path."""
-    wt = str(tmp_path / "cic-worktree-f" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-f" / "tree")
     stderr = f"api_key={'A' * 16}=file://{wt}/abcdefgh"
     result = _run_delegate_with_failure(monkeypatch, stderr, wt_path=wt)
     assert "abcdefgh" not in result["error"]["message"]
     assert wt not in result["error"]["message"]
-    assert "cic-worktree-" not in result["error"]["message"]
+    assert "moonbridge-worktree-" not in result["error"]["message"]
 
 
 def test_run_delegate_classify_failure_redacts_short_path_bearing_secret(monkeypatch, tmp_path):
     """Ordering attack B end to end through the error path."""
-    wt = str(tmp_path / "cic-worktree-g" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-g" / "tree")
     stderr = f"api_key={wt}/abcdefgh"
     result = _run_delegate_with_failure(monkeypatch, stderr, wt_path=wt)
     assert "abcdefgh" not in result["error"]["message"]
@@ -447,8 +447,8 @@ def test_run_delegate_classify_failure_sanitizes_sentence_final_root(monkeypatch
     """#420 review round 3 end to end: a raw diagnostic ending in a bare worktree root plus
     a period (`fatal: failed in <wt>.`, a common git-stderr shape) must not leak the
     absolute path through the full run_delegate stack."""
-    wt = str(tmp_path / "cic-worktree-h" / "tree")
+    wt = str(tmp_path / "moonbridge-worktree-h" / "tree")
     stderr = f"fatal: failed in {wt}."
     result = _run_delegate_with_failure(monkeypatch, stderr, wt_path=wt)
     assert wt not in result["error"]["message"]
-    assert "cic-worktree-" not in result["error"]["message"]
+    assert "moonbridge-worktree-" not in result["error"]["message"]

@@ -89,7 +89,7 @@ questions and are not interchangeable:
 - `fingerprint` — **contract identity**: which agent-visible surface (tool/field shapes, error
   codes, documented meaning) this result conforms to. A client cache key — bump it and a cached
   client re-fetches the contract.
-- `server_version` — **release identity**: the installed `kimi-in-claude` package version attributed
+- `server_version` — **release identity**: the installed `moonbridge` package version attributed
   to this result. Provenance, not a cache key — it lets a downstream consumer (an MCP error audit,
   say) scope an analysis to a release instead of guessing from timestamps. It is a *package* version,
   not a per-commit build id: an unreleased build reports the release it was cut from, so two runs
@@ -161,7 +161,8 @@ The six spend-committing tools — `kimi_consult`, `kimi_review_changes`, `kimi_
 same arguments replays the existing run instead of starting (and paying for) a duplicate Kimi call:
 a sync call reattaches to the in-flight run and returns its result; an `_async` call returns the same
 `job_id`. The key is scoped to the concrete tool — the sync and `_async` variants are different tools
-and never share a key's run (see ADR 0001 for why they are separate tools). Reuse with different arguments (including a different `timeout_seconds`)
+and never share a key's run. [ADR 0001](adr/0001-keep-sync-and-async-tools-separate.md) explains why
+they are separate tools. Reuse with different arguments (including a different `timeout_seconds`)
 is refused with `idempotency_conflict`; a key whose prior result was already consumed/evicted is
 `idempotency_result_unavailable`; a still-publishing reservation is `idempotency_in_progress`
 (retryable). Omit the key for the prior no-dedup behavior.
@@ -179,11 +180,11 @@ records that sync runs also create). Operational semantics:
 - **Backoff.** Every polling response carries `poll_after_ms`; honor it rather than polling in a
   tight loop. It grows with a running job's elapsed runtime (bounded), so you back off
   automatically on long runs.
-- **Deadline.** A job is bounded by a wall-clock cap (`KIMI_IN_CLAUDE_JOB_MAX_SECONDS`); a poll
+- **Deadline.** A job is bounded by a wall-clock cap (`MOONBRIDGE_JOB_MAX_SECONDS`); a poll
   past the deadline reaps the job.
 - **Retention.** Results are retained `ttl_seconds` **after** a job completes, so `expires_at` is
   `null` while it runs and is set once it finishes. Records are also evicted oldest-terminal-first
-  past a per-workspace count cap (`KIMI_IN_CLAUDE_JOB_MAX_COUNT`).
+  past a per-workspace count cap (`MOONBRIDGE_JOB_MAX_COUNT`).
 - **`server_version` provenance.** Only a *replayed* payload carries the producing run's version;
   every freshly built envelope carries the responding server's. For a `done` job, a
   `kimi_job_result`/`kimi_job_consume_result` reply replays the stored payload and carries the

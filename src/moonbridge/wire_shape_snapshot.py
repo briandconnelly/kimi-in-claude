@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from kimi_in_claude.schemas import (
+from moonbridge.schemas import (
     FINGERPRINT,
     RESULT_FORMAT,
     ConsultResult,
@@ -49,7 +49,7 @@ from kimi_in_claude.schemas import (
     dump_success,
     workspace_warning_for,
 )
-from kimi_in_claude.server import _finished_job_envelope
+from moonbridge.server import _finished_job_envelope
 
 _FINGERPRINT_SENTINEL = "<fingerprint>"
 _VERSION_SENTINEL = "0.0.0"

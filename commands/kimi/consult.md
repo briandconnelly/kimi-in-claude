@@ -4,7 +4,7 @@ argument-hint: "<question>"
 ---
 
 Ask Kimi Code for an independent second opinion using the `kimi_consult` MCP
-tool from the kimi-in-claude server.
+tool from the moonbridge server.
 
 Question: $ARGUMENTS
 

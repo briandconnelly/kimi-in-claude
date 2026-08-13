@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from kimi_in_claude import cli_contract, kimi
-from kimi_in_claude._core.runtime import CommandRun
-from kimi_in_claude.preflight import FlagSupport
-from kimi_in_claude.schemas import Meta
+from moonbridge import cli_contract, kimi
+from moonbridge._core.runtime import CommandRun
+from moonbridge.preflight import FlagSupport
+from moonbridge.schemas import Meta
 
 ALL_FLAGS = FlagSupport(
     supported=frozenset({cli_contract.MODEL_FLAG, cli_contract.SKILLS_DIR_FLAG}),
@@ -54,9 +54,9 @@ def test_read_only_without_an_agent_file_raises_rather_than_degrading():
 
 def test_read_only_sends_the_agent_file():
     cmd, _ = _build(
-        sandbox=cli_contract.SANDBOX_READ_ONLY, agent_file_path="/tmp/wt/.kimi-in-claude/a.md"
+        sandbox=cli_contract.SANDBOX_READ_ONLY, agent_file_path="/tmp/wt/.moonbridge/a.md"
     )
-    assert cmd[cmd.index(cli_contract.AGENT_FILE_FLAG) + 1] == "/tmp/wt/.kimi-in-claude/a.md"
+    assert cmd[cmd.index(cli_contract.AGENT_FILE_FLAG) + 1] == "/tmp/wt/.moonbridge/a.md"
 
 
 def test_the_agent_file_flag_is_never_help_gated_away():
@@ -198,7 +198,7 @@ def test_handshake_offers_an_answer_file_only_to_the_propose_tier(tmp_path):
 
 def test_the_handshake_dir_is_outside_any_repository(tmp_path):
     """It must not live in the worktree. The worktree is seeded from repository content, so
-    a repo tracking `.kimi-in-claude` as a symlink would redirect these writes outside the
+    a repo tracking `.moonbridge` as a symlink would redirect these writes outside the
     tree — and an agent file redirected to /dev/null could void the read-only guarantee."""
     d = kimi.create_handshake_dir()
     try:
@@ -210,7 +210,7 @@ def test_the_handshake_dir_is_outside_any_repository(tmp_path):
 
 def test_handshake_refuses_to_follow_a_planted_symlink(tmp_path):
     """Regression for the escape Codex found: write_text followed a symlink at the target,
-    so a tracked `.kimi-in-claude` symlink made the SERVER write outside the worktree."""
+    so a tracked `.moonbridge` symlink made the SERVER write outside the worktree."""
     victim = tmp_path / "victim.txt"
     victim.write_text("ORIGINAL")
     d = tmp_path / "handshake"
@@ -326,7 +326,7 @@ def _run(stdout="", stderr="", exit_code=1, timed_out=False):
 
 
 def test_missing_binary():
-    from kimi_in_claude._core.runtime import BINARY_NOT_FOUND
+    from moonbridge._core.runtime import BINARY_NOT_FOUND
 
     err = kimi.classify_failure(_run(stderr=BINARY_NOT_FOUND, exit_code=127))
     assert err.code == "kimi_not_found"
@@ -432,7 +432,7 @@ def test_login_status_detail_never_echoes_provider_details(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        "kimi_in_claude._core.runtime.run_sync_capture",
+        "moonbridge._core.runtime.run_sync_capture",
         lambda *a, **k: CommandRun(payload, "", 0, 5, False),
     )
     configured, detail = kimi.login_status()
@@ -442,20 +442,20 @@ def test_login_status_detail_never_echoes_provider_details(monkeypatch):
 
 
 def test_login_status_is_indeterminate_when_the_probe_cannot_run(monkeypatch):
-    from kimi_in_claude._core.runtime import BINARY_NOT_FOUND
+    from moonbridge._core.runtime import BINARY_NOT_FOUND
 
     monkeypatch.setattr(
-        "kimi_in_claude._core.runtime.run_sync_capture",
+        "moonbridge._core.runtime.run_sync_capture",
         lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
     )
     assert kimi.login_status() == (None, None)
 
 
 def test_kimi_version_returns_none_when_absent(monkeypatch):
-    from kimi_in_claude._core.runtime import BINARY_NOT_FOUND
+    from moonbridge._core.runtime import BINARY_NOT_FOUND
 
     monkeypatch.setattr(
-        "kimi_in_claude._core.runtime.run_sync_capture",
+        "moonbridge._core.runtime.run_sync_capture",
         lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
     )
     assert kimi.kimi_version() is None

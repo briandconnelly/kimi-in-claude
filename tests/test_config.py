@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from kimi_in_claude import config
+from moonbridge import config
 
 
 def test_job_store_configures_worktree_cleanup(clean_env):
     import tempfile
     from pathlib import Path
 
-    from kimi_in_claude._core import worktree
+    from moonbridge._core import worktree
 
     store = config.job_store()
     # The store may clean up only the throwaway-worktree temp area.
@@ -42,10 +42,10 @@ def test_default_timeout_seconds_is_300(clean_env):
 
 
 def test_defaults_env_overrides(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_TIER_DEFAULT", "propose")
-    clean_env.setenv("KIMI_IN_CLAUDE_MODEL", "gpt-5.4")
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "high")
-    clean_env.setenv("KIMI_IN_CLAUDE_TIMEOUT_SECONDS", "42")
+    clean_env.setenv("MOONBRIDGE_TIER_DEFAULT", "propose")
+    clean_env.setenv("MOONBRIDGE_MODEL", "gpt-5.4")
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "high")
+    clean_env.setenv("MOONBRIDGE_TIMEOUT_SECONDS", "42")
     d = config.defaults()
     assert d.tier == "propose"
     assert d.sandbox == "workspace-write"  # tier default
@@ -55,18 +55,18 @@ def test_defaults_env_overrides(clean_env):
 
 
 def test_blank_reasoning_effort_env_is_unset(clean_env):
-    # Same convention as KIMI_IN_CLAUDE_MODEL: a blank env value means "not set".
-    clean_env.setenv("KIMI_IN_CLAUDE_REASONING_EFFORT", "")
+    # Same convention as MOONBRIDGE_MODEL: a blank env value means "not set".
+    clean_env.setenv("MOONBRIDGE_REASONING_EFFORT", "")
     assert config.defaults().reasoning_effort is None
 
 
 def test_invalid_tier_falls_back(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_TIER_DEFAULT", "nonsense")
+    clean_env.setenv("MOONBRIDGE_TIER_DEFAULT", "nonsense")
     assert config.defaults().tier == "consult"
 
 
 def test_sandbox_default_override_validated(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_SANDBOX_DEFAULT", "bogus")
+    clean_env.setenv("MOONBRIDGE_SANDBOX_DEFAULT", "bogus")
     # invalid override -> falls back to the tier's sandbox
     assert config.defaults().sandbox == "read-only"
 
@@ -97,9 +97,9 @@ def test_is_env_placeholder(value, expected):
 
 
 def test_placeholder_env_vars(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_MODEL", "${MODEL}")
-    clean_env.setenv("KIMI_IN_CLAUDE_TIMEOUT_SECONDS", "60")
-    assert config.placeholder_env_vars() == ["KIMI_IN_CLAUDE_MODEL"]
+    clean_env.setenv("MOONBRIDGE_MODEL", "${MODEL}")
+    clean_env.setenv("MOONBRIDGE_TIMEOUT_SECONDS", "60")
+    assert config.placeholder_env_vars() == ["MOONBRIDGE_MODEL"]
 
 
 @pytest.mark.parametrize(
@@ -111,13 +111,13 @@ def test_version_supported(version, expected, clean_env):
 
 
 def test_supported_versions_env_override(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_SUPPORTED_VERSIONS", "0.999")
+    clean_env.setenv("MOONBRIDGE_SUPPORTED_VERSIONS", "0.999")
     assert config.version_supported("kimi-cli 0.999.3") is True
     assert config.version_supported("0.35.0") is False
 
 
 def test_supported_versions_bad_env_falls_back(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_SUPPORTED_VERSIONS", "garbage")
+    clean_env.setenv("MOONBRIDGE_SUPPORTED_VERSIONS", "garbage")
     assert config.version_supported("0.35.0") is True
 
 
@@ -125,16 +125,16 @@ def test_state_dir_default(clean_env, monkeypatch):
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     p = config.state_dir()
     assert p.name == "jobs"
-    assert "kimi-in-claude" in str(p)
+    assert "moonbridge" in str(p)
 
 
 def test_state_dir_override(clean_env, tmp_path):
-    clean_env.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path / "jobs"))
+    clean_env.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path / "jobs"))
     assert config.state_dir() == tmp_path / "jobs"
 
 
 def test_max_input_bytes_floor(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_MAX_INPUT_BYTES", "5")
+    clean_env.setenv("MOONBRIDGE_MAX_INPUT_BYTES", "5")
     assert config.max_input_bytes() == 1_000
 
 
@@ -143,17 +143,17 @@ def test_max_delegate_diff_bytes_default(clean_env):
 
 
 def test_max_delegate_diff_bytes_override(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "12345")
+    clean_env.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "12345")
     assert config.max_delegate_diff_bytes() == 12345
 
 
 def test_max_delegate_diff_bytes_invalid_falls_back(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "notanint")
+    clean_env.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "notanint")
     assert config.max_delegate_diff_bytes() == config.DEFAULT_MAX_DELEGATE_DIFF_BYTES
 
 
 def test_max_delegate_diff_bytes_floor(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_MAX_DELEGATE_DIFF_BYTES", "5")
+    clean_env.setenv("MOONBRIDGE_MAX_DELEGATE_DIFF_BYTES", "5")
     assert config.max_delegate_diff_bytes() == 1_000
 
 
@@ -164,51 +164,51 @@ def test_job_defaults(clean_env):
 
 
 def test_job_knobs_clamp_low(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_TTL", "10")
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_MAX_SECONDS", "5")
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_MAX_COUNT", "0")
+    clean_env.setenv("MOONBRIDGE_JOB_TTL", "10")
+    clean_env.setenv("MOONBRIDGE_JOB_MAX_SECONDS", "5")
+    clean_env.setenv("MOONBRIDGE_JOB_MAX_COUNT", "0")
     assert config.job_ttl_seconds() == 60
     assert config.job_max_seconds() == 60
     assert config.job_max_count() == 1
 
 
 def test_job_knobs_clamp_high(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_MAX_SECONDS", "999999")
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_MAX_COUNT", "999999")
+    clean_env.setenv("MOONBRIDGE_JOB_MAX_SECONDS", "999999")
+    clean_env.setenv("MOONBRIDGE_JOB_MAX_COUNT", "999999")
     assert config.job_max_seconds() == 7_200
     assert config.job_max_count() == 1_000
 
 
 def test_job_knobs_env_override(clean_env):
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_TTL", "3600")
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_MAX_SECONDS", "600")
-    clean_env.setenv("KIMI_IN_CLAUDE_JOB_MAX_COUNT", "10")
+    clean_env.setenv("MOONBRIDGE_JOB_TTL", "3600")
+    clean_env.setenv("MOONBRIDGE_JOB_MAX_SECONDS", "600")
+    clean_env.setenv("MOONBRIDGE_JOB_MAX_COUNT", "10")
     assert config.job_ttl_seconds() == 3600
     assert config.job_max_seconds() == 600
     assert config.job_max_count() == 10
 
 
 def test_max_output_bytes_default(monkeypatch):
-    monkeypatch.delenv("KIMI_IN_CLAUDE_MAX_OUTPUT_BYTES", raising=False)
+    monkeypatch.delenv("MOONBRIDGE_MAX_OUTPUT_BYTES", raising=False)
     assert config.max_output_bytes() == 10 * 1024 * 1024
 
 
 def test_max_output_bytes_env_override(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_OUTPUT_BYTES", "500000")
+    monkeypatch.setenv("MOONBRIDGE_MAX_OUTPUT_BYTES", "500000")
     assert config.max_output_bytes() == 500_000
 
 
 def test_max_output_bytes_floor(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_OUTPUT_BYTES", "10")
+    monkeypatch.setenv("MOONBRIDGE_MAX_OUTPUT_BYTES", "10")
     assert config.max_output_bytes() == 64 * 1024
 
 
 def test_max_output_bytes_bad_value(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_MAX_OUTPUT_BYTES", "notanint")
+    monkeypatch.setenv("MOONBRIDGE_MAX_OUTPUT_BYTES", "notanint")
     assert config.max_output_bytes() == 10 * 1024 * 1024
 
 
-# --- KIMI_IN_CLAUDE_EXTRA_ARGS passthrough (#231) --------------------------------
+# --- MOONBRIDGE_EXTRA_ARGS passthrough (#231) --------------------------------
 
 
 def test_extra_args_unset_is_empty_and_valid(clean_env):
@@ -222,14 +222,14 @@ def test_extra_args_unset_is_empty_and_valid(clean_env):
 
 
 def test_extra_args_blank_is_unconfigured(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "   ")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "   ")
     ea = config.extra_args()
     assert ea.configured is False
     assert ea.tokens == ()
 
 
 def test_extra_args_unbalanced_quotes_invalid(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", '-c "model_provider=x')
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", '-c "model_provider=x')
     ea = config.extra_args()
     assert ea.configured is True
     assert ea.valid is False
@@ -238,26 +238,26 @@ def test_extra_args_unbalanced_quotes_invalid(monkeypatch):
 
 
 def test_extra_args_rejects_unknown_flag(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "--json")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "--json")
     ea = config.extra_args()
     assert ea.valid is False
     assert "unsupported" in ea.error
 
 
 def test_extra_args_rejects_bare_positional(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "some-prompt-text")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "some-prompt-text")
     ea = config.extra_args()
     assert ea.valid is False
 
 
 def test_extra_args_rejects_attached_short_form(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-cmodel_provider=x")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-cmodel_provider=x")
     ea = config.extra_args()
     assert ea.valid is False
 
 
 def test_extra_args_denies_approval_policy_key(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c approval_policy=never")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-c approval_policy=never")
     ea = config.extra_args()
     assert ea.valid is False
 
@@ -265,7 +265,7 @@ def test_extra_args_denies_approval_policy_key(monkeypatch):
 def test_extra_args_error_never_echoes_secret_value(monkeypatch):
     # An invalid trailing token must not leak a preceding secret -c value.
     monkeypatch.setenv(
-        "KIMI_IN_CLAUDE_EXTRA_ARGS",
+        "MOONBRIDGE_EXTRA_ARGS",
         "-c model_providers.x.api_key=sk-supersecretvalue --bogus",
     )
     ea = config.extra_args()
@@ -274,14 +274,14 @@ def test_extra_args_error_never_echoes_secret_value(monkeypatch):
 
 
 def test_extra_args_denies_sandbox_key_with_space_around_dot(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", '-c "sandbox_mode =danger-full-access"')
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", '-c "sandbox_mode =danger-full-access"')
     ea = config.extra_args()
     assert ea.valid is False
 
 
 def test_extra_args_denies_shell_environment_policy_key(monkeypatch):
     # host-env exfil vector: exposing the server env to commands kimi runs.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c shell_environment_policy.inherit=all")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-c shell_environment_policy.inherit=all")
     ea = config.extra_args()
     assert ea.valid is False
 
@@ -298,7 +298,7 @@ def test_extra_args_denies_shell_environment_policy_key(monkeypatch):
 def test_extra_args_model_denial_is_not_the_remote_plugin_message(monkeypatch):
     # The reserved-key refusal must carry its own explanation, not the
     # remote_plugin security-guarantee text (#287) or the sandbox-roots text.
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-c model=gpt-5-kimi")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-c model=gpt-5-kimi")
     ea = config.extra_args()
     assert ea.valid is False
     assert "remote_plugin" not in ea.error
@@ -372,7 +372,7 @@ def test_reasoning_effort_shape_rejects_every_surrogate():
 
 
 # --------------------------------------------------------------------------- #
-# KIMI_IN_CLAUDE_EXTRA_ARGS — no safe passthrough exists for kimi
+# MOONBRIDGE_EXTRA_ARGS — no safe passthrough exists for kimi
 # --------------------------------------------------------------------------- #
 # The Codex original allowlisted `-c KEY=VALUE`, `-p NAME`, and `--enable/--disable`.
 # kimi has none of those, and reuses two of the short flags for other things, so the
@@ -392,7 +392,7 @@ def test_reasoning_effort_shape_rejects_every_surrogate():
     ],
 )
 def test_extra_args_refuses_every_option(monkeypatch, value):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", value)
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", value)
     parsed = config.extra_args()
     assert parsed.configured is True
     assert parsed.valid is False
@@ -402,14 +402,14 @@ def test_extra_args_refuses_every_option(monkeypatch, value):
 def test_extra_args_refusal_explains_the_flag_collision(monkeypatch):
     """-p and -c mean PROMPT and CONTINUE in kimi. Silently accepting `-p foo` would append
     a second prompt after the plugin's own and override the run's real instructions."""
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "-p sneaky")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "-p sneaky")
     parsed = config.extra_args()
     assert parsed.valid is False
     assert "PROMPT" in parsed.error
 
 
 def test_extra_args_unset_is_valid_and_empty(monkeypatch):
-    monkeypatch.delenv("KIMI_IN_CLAUDE_EXTRA_ARGS", raising=False)
+    monkeypatch.delenv("MOONBRIDGE_EXTRA_ARGS", raising=False)
     parsed = config.extra_args()
     assert parsed.configured is False
     assert parsed.valid is True
@@ -417,7 +417,7 @@ def test_extra_args_unset_is_valid_and_empty(monkeypatch):
 
 
 def test_extra_args_blank_is_treated_as_unset(monkeypatch):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_EXTRA_ARGS", "   ")
+    monkeypatch.setenv("MOONBRIDGE_EXTRA_ARGS", "   ")
     assert config.extra_args().configured is False
 
 
@@ -442,7 +442,7 @@ def test_skills_dir_is_none_when_inheriting():
 
 
 def test_skills_dir_for_ignore_skills_is_an_existing_empty_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("KIMI_IN_CLAUDE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MOONBRIDGE_STATE_DIR", str(tmp_path))
     path = config.skills_dir_for("ignore-skills")
     assert path is not None
     assert Path(path).is_dir()

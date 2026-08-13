@@ -2,7 +2,7 @@
 
 Use this fallback only after an MCP transport error shows the stdio server is unavailable.
 
-First ask the user to reconnect or restart the `kimi-in-claude` MCP server, then confirm recovery
+First ask the user to reconnect or restart the `moonbridge` MCP server, then confirm recovery
 with free `kimi_status`. The plugin path is strongly preferred: it supplies workspace-aware diff
 gathering, bounded input, best-effort redaction, structured results, the throwaway worktree, and
 the orphaned-process cleanup that a bare CLI call has none of.
@@ -17,7 +17,7 @@ Write the profile first, outside the repository:
 AGENT="$(mktemp -d)/readonly.md"
 cat > "$AGENT" <<'EOF'
 ---
-name: kimi-in-claude-readonly
+name: moonbridge-readonly
 description: Read-only consultant with no shell or write tools.
 tools:
   - Read

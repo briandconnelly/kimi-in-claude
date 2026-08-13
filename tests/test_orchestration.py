@@ -6,11 +6,11 @@ import json
 
 import anyio
 
-from kimi_in_claude import cli_contract, kimi, orchestration
-from kimi_in_claude._core import redaction
-from kimi_in_claude._core.gitdiff import DiffResult, DiffSummary, InvalidUntrackedError
-from kimi_in_claude._core.runtime import CommandRun
-from kimi_in_claude.schemas import Coverage, Meta
+from moonbridge import cli_contract, kimi, orchestration
+from moonbridge._core import redaction
+from moonbridge._core.gitdiff import DiffResult, DiffSummary, InvalidUntrackedError
+from moonbridge._core.runtime import CommandRun
+from moonbridge.schemas import Coverage, Meta
 
 # events string containing a token_count event with a rate_limits block
 _RATE_LIMIT_EVENTS = (
@@ -493,7 +493,7 @@ def test_run_review_forwards_on_event(monkeypatch):
 
     from types import SimpleNamespace
 
-    from kimi_in_claude._core import gitdiff
+    from moonbridge._core import gitdiff
 
     fake_diff = SimpleNamespace(
         summary=SimpleNamespace(files_changed=1, lines_added=1, lines_removed=0),
@@ -567,7 +567,7 @@ def test_run_consult_forwards_reasoning_effort(monkeypatch):
 def test_run_review_forwards_reasoning_effort(monkeypatch):
     from types import SimpleNamespace
 
-    from kimi_in_claude._core import gitdiff
+    from moonbridge._core import gitdiff
 
     captured: dict = {}
 

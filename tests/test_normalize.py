@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kimi_in_claude import normalize
+from moonbridge import normalize
 
 
 def test_parse_event_metadata_usage_and_session():

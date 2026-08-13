@@ -10,7 +10,7 @@ import json
 import pytest
 from fastmcp import Client
 
-from kimi_in_claude.server import mcp
+from moonbridge.server import mcp
 
 # Measured 2026-07-26 at schema-56: 79,242 bytes. Measured at schema-57 (idempotency_key and
 # extra_context compressed into the registry): 76,911 bytes. Measured again at schema-57 after

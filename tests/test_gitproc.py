@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from kimi_in_claude._core import gitproc, streamcap
+from moonbridge._core import gitproc, streamcap
 
 _ENV = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 

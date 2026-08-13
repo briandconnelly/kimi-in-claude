@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from kimi_in_claude import orchestration as o
-from kimi_in_claude._core.gitdiff import DiffResult, DiffSummary
-from kimi_in_claude.schemas import Coverage, RedactionSummary, ReviewResult
+from moonbridge import orchestration as o
+from moonbridge._core.gitdiff import DiffResult, DiffSummary
+from moonbridge.schemas import Coverage, RedactionSummary, ReviewResult
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
