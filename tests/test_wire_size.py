@@ -115,7 +115,17 @@ from moonbridge.server import mcp
 # reach the wire as a `"minimum":0` property, duplicated across the same two tools'
 # outputSchema as the row above): 87,281 bytes (+24 B) — still within budget, no
 # further change.
-TOOLS_LIST_BYTE_BUDGET = 87_500
+# Measured 2026-08-13 (fix!: remove Codex-port vestiges — the three `transfer_*` codes left
+# every tool's outputSchema error enum, and `app_server_stderr_tail` left the error branch
+# in all 16, while kimi_status shed its dead rate_limit prose): 83,466 bytes (-3,815 B).
+# A DROP, so the budget is not lowered automatically — lowering it is its own deliberate
+# act, taken below now that a second change has confirmed the new level.
+# Measured again the same day (audit M2: `isolation` registered in PARAMETER_CONTRACTS, its
+# 295-char inline description compressed to a 225-char summary with AGENTS.md-always-loads,
+# the skill-name egress path, and extra_skill_dirs moved to kimi://params — 8 tools carry
+# it, so ~560 B): 82,866 bytes (-600 B). Budget lowered to the next 500 above the measured
+# value, banking both reductions so a regression cannot silently spend them.
+TOOLS_LIST_BYTE_BUDGET = 83_000
 
 # The measured tools/list size as of the last deliberate review above — NOT a second gate.
 # The budget assertion below is the only hard failure; this exists purely so the assertion's
@@ -127,7 +137,7 @@ TOOLS_LIST_BYTE_BUDGET = 87_500
 # history above is "still within budget, no further change" rows that grew the measured size
 # without touching the budget; the target must track every one of those too, or it silently
 # goes stale between the raises).
-TOOLS_LIST_BYTE_TARGET = 87_281
+TOOLS_LIST_BYTE_TARGET = 82_866
 
 
 def _budget_failure_message(measured: int) -> str:

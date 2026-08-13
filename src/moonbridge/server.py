@@ -765,13 +765,7 @@ PathsParam = Annotated[
 ]
 IsolationParam = Annotated[
     Isolation | None,
-    Field(
-        description="Kimi skills isolation: which skills Kimi loads — 'inherit' (its own "
-        "user/project discovery) "
-        "or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills "
-        "load either way. Defaults to the server's configured value (built-in 'inherit'; "
-        "`kimi_status` reports the resolved one)."
-    ),
+    Field(description=param_contracts.PARAMETER_CONTRACTS["isolation"].summary),
 ]
 ScopeParam = Annotated[
     ReviewScope,

@@ -875,7 +875,7 @@
             "type": "string"
           },
           "fingerprint": {
-            "default": "moonbridge/0.1/schema-2",
+            "default": "moonbridge/0.1/schema-3",
             "title": "Fingerprint",
             "type": "string"
           },
@@ -1419,7 +1419,7 @@
                 "type": "integer"
               },
               "fingerprint": {
-                "default": "moonbridge/0.1/schema-2",
+                "default": "moonbridge/0.1/schema-3",
                 "title": "Fingerprint",
                 "type": "string"
               },
@@ -2072,7 +2072,7 @@
     {
       "_meta": {
         "dev.bconnelly.moonbridge/triage": {
-          "size_bytes": 3699
+          "size_bytes": 4739
         }
       },
       "mimeType": "application/json",
@@ -2086,6 +2086,10 @@
           "idempotency_key": {
             "full": "Optional client-supplied dedup key, scoped to THIS concrete tool on the same workspace. Reusing it on the same tool with the same arguments replays the existing run instead of starting — and paying for — a duplicate Kimi call (a sync call reattaches to the in-flight run and returns its result; an _async call returns the same job_id). The sync and _async variants are DIFFERENT tools and never share a key's run. Reuse with different arguments — including a different timeout_seconds — is refused (idempotency_conflict); a key whose prior result was already consumed/evicted is idempotency_result_unavailable; a still-publishing reservation is idempotency_in_progress (retry). Omit it for the prior no-dedup behavior. A completed result stays replayable while its job record lives (its TTL), subject to consumption or count-eviction; the fail-closed conflict/in-progress window can last longer — up to the job's max runtime + termination grace + TTL. meta.idempotency_replayed=true marks a replayed (unpaid) response.",
             "summary": "Optional dedup key scoped to THIS tool + workspace. Same key + same args replays the prior result with no new spend; different args are refused (idempotency_conflict). Sync and _async are separate tools and never share a key. Omit for none; retention is bounded. Lifecycle: kimi://params."
+          },
+          "isolation": {
+            "full": "Which skills Kimi loads for this run: 'inherit' (its own user/project discovery) or 'ignore-skills' (that discovery replaced with an empty directory). Defaults to the server's configured value — built-in 'inherit'; kimi_status reports the resolved one. This setting is NARROWER than it sounds, and the limits are the load-bearing part: Kimi's built-in skills always load, and the resolved workspace's AGENTS.md is always read, under either value. Skill names and descriptions reach the model up front, so a skill's content can be sent to your provider even when your prompt never mentions it, and skills configured through kimi's own `extra_skill_dirs` may come from outside the workspace entirely. Treat 'ignore-skills' as reducing what is loaded, never as isolation.",
+            "summary": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "reasoning_effort": {
             "full": "Override the Kimi reasoning effort for this call (sent as a `model_reasoning_effort` config override); omit (or pass null) for the server default (MOONBRIDGE_REASONING_EFFORT) or Kimi's own resolution. An open per-model string the Kimi backend validates at run time — commonly minimal|low|medium|high|xhigh; kimi_models lists each model's advertised set (advisory). A backend-rejected value fails as invalid_reasoning_effort (repair steers to kimi_models); an explicit empty string is sent as-is (and rejected by the backend), never treated as unset. Control characters, surrogates, and values over 128 chars in this per-call argument are rejected at the MCP boundary as invalid_arguments; the same hostile shape in the resolved MOONBRIDGE_REASONING_EFFORT default — which never crosses that boundary — is instead refused pre-spend as invalid_reasoning_effort (repair: correct the config; zero spend, the value never reaches kimi).",
@@ -2139,7 +2143,7 @@
     {
       "_meta": {
         "dev.bconnelly.moonbridge/triage": {
-          "size_bytes": 3699
+          "size_bytes": 4739
         }
       },
       "description": "Full semantics for parameters whose tools/list description is a compressed summary\n(#333). MCP inlines each parameter description into every tool's inputSchema, so the\nlengthy lifecycle/validation prose is shipped once here instead of repeated on the\nwire; the inline summary keeps the first-call selection, safety, and spend-critical\nfacts and points here for the complete lifecycle and recovery semantics.",
@@ -2542,7 +2546,7 @@
             "type": "integer"
           },
           "fingerprint": {
-            "default": "moonbridge/0.1/schema-2",
+            "default": "moonbridge/0.1/schema-3",
             "title": "Fingerprint",
             "type": "string"
           },
@@ -3195,7 +3199,7 @@
             "type": "boolean"
           },
           "fingerprint": {
-            "default": "moonbridge/0.1/schema-2",
+            "default": "moonbridge/0.1/schema-3",
             "title": "Fingerprint",
             "type": "string"
           },
@@ -3597,7 +3601,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -3898,7 +3902,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -4174,7 +4178,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -4473,7 +4477,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -4724,7 +4728,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -5056,7 +5060,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -6643,7 +6647,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [
@@ -7109,7 +7113,7 @@
               }
             ],
             "default": null,
-            "description": "Kimi skills isolation: which skills Kimi loads — 'inherit' (its own user/project discovery) or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills load either way. Defaults to the server's configured value (built-in 'inherit'; `kimi_status` reports the resolved one)."
+            "description": "Which skills Kimi loads: 'inherit' (own user/project discovery) or 'ignore-skills' (empty dir). Built-ins load either way; this reduces loading, not isolation. Default: server-configured, per kimi_status. More: kimi://params."
           },
           "model": {
             "anyOf": [

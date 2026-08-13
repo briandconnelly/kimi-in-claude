@@ -16,6 +16,18 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
+- `isolation` joins the shared parameter-contract registry: its 295-character inline
+  description is now a 225-character summary, with AGENTS.md-always-loads, the skill-name
+  egress path, and `extra_skill_dirs` served from `kimi://params`. It rides 8 tools, so this
+  is ~560 bytes off `tools/list`. This reverses a 2026-07-26 decision that measured
+  registration as a 88-byte *loss*; that measurement was correct for the summary it tested
+  (the full text plus a pointer) and wrong as a permanent property of the parameter.
+- The wire-size budget drops 87,500 → 83,000, banking both this and the vestige removal
+  (which took 3,815 bytes out of every tool's error enum and branch). Measured
+  `tools/list` is 82,866 bytes, down from 87,281.
+- `test_summary_is_materially_shorter_than_what_it_replaced` becomes
+  `test_registration_pays_for_itself_in_wire_bytes`: it asserted a 25%-shorter proxy, which
+  misjudges a short description with wide fan-out. It now asserts measured bytes saved.
 - **Breaking:** `kimi_status` no longer advertises a live quota read. Its `rate_limit` block
   always reports `unavailable` — kimi exposes no quota-read channel — so the description that
   taught agents to plan spend around `available`/`limited`/`exhausted`/`blocked` described states
@@ -26,7 +38,7 @@ All notable changes to this project are documented here, following
   subcommand and no sandbox; what constrains a read-only run is the generated agent profile.
   `cli_contract.FORBIDDEN_SURFACE_PHRASES` now owns that ban and
   `tests/test_surface_honesty.py` enforces it against the built manifest.
-- `FINGERPRINT` is `moonbridge/0.1/schema-2`. `RESULT_FORMAT` is unchanged: only the `schemas`
+- `FINGERPRINT` is `moonbridge/0.1/schema-3`. `RESULT_FORMAT` is unchanged: only the `schemas`
   view of the result-format snapshot moved, the `serialized` view is byte-identical, and no
   stored job record can contain a removed code or the never-populated field.
 

@@ -2416,7 +2416,7 @@ def test_job_status_model_requires_result_ok_from_store():
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "moonbridge/0.1/schema-2"
+    assert FINGERPRINT == "moonbridge/0.1/schema-3"
 
 
 def test_capabilities_payload_discloses_fingerprint_covers():
@@ -4208,7 +4208,7 @@ async def test_replay_normalizes_fingerprint_but_not_version(monkeypatch, clean_
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
     )
     stored["meta"]["server_version"] = "0.1.0"
-    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-2"  # a pre-upgrade worker
+    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-3"  # a pre-upgrade worker
     store = _FakeStore(record=_ok_record("done"), result_json=stored)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))
