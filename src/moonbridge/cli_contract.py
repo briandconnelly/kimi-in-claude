@@ -127,6 +127,18 @@ READ_ONLY_CONFIDENTIALITY_LIMIT = (
     "you would not hand to that provider."
 )
 
+# --- Vocabulary this surface must never use ---------------------------------------------
+# Two Codex-era phrasings outlived the port and reached the wire, where they taught agents
+# a mechanism that does not exist: `kimi exec` (there is no exec subcommand — EXEC_SUBCOMMAND
+# is empty) and "read-only sandbox" (read-only is a tool allowlist, per the paragraph above,
+# not a filesystem boundary). Both were description-only defects, so every gate passed while
+# the prose was wrong.
+#
+# This tuple is the ban's single home; tests/test_surface_honesty.py enforces it against the
+# built manifest, and re-checks that the facts justifying each phrase still hold. Say what
+# actually runs instead: `kimi -p` under a generated read-only agent profile.
+FORBIDDEN_SURFACE_PHRASES = ("kimi exec", "read-only sandbox")
+
 # --- The file handshake ----------------------------------------------------------------
 # Written inside the worktree, under a single dot-directory kept out of any captured diff.
 HANDSHAKE_DIR_NAME = ".moonbridge"

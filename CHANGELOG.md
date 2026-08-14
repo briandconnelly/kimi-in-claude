@@ -5,6 +5,66 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** the `transfer_unsupported`, `transfer_failed`, and `transfer_incomplete` error
+  codes, and the `app_server_stderr_tail` field on the error envelope. All four were inherited
+  from the Codex plugin this server was ported from: kimi has no session-transfer equivalent, so
+  no handler could emit them, while their repair hints told agents to retry a `kimi_transfer`
+  tool that does not exist (and to install `@openai/kimi`). Restore them only alongside a real
+  `kimi_transfer` tool.
+
+### Changed
+
+- `isolation` joins the shared parameter-contract registry: its 295-character inline
+  description is now a 225-character summary, with AGENTS.md-always-loads, the skill-name
+  egress path, and `extra_skill_dirs` served from `kimi://params`. It rides 8 tools, so this
+  is ~560 bytes off `tools/list`. This reverses a 2026-07-26 decision that measured
+  registration as a 88-byte *loss*; that measurement was correct for the summary it tested
+  (the full text plus a pointer) and wrong as a permanent property of the parameter.
+- The wire-size budget drops 87,500 → 83,000, banking both this and the vestige removal
+  (which took 3,815 bytes out of every tool's error enum and branch). Measured
+  `tools/list` is 82,866 bytes, down from 87,281.
+- `test_summary_is_materially_shorter_than_what_it_replaced` becomes
+  `test_registration_pays_for_itself_in_wire_bytes`: it asserted a 25%-shorter proxy, which
+  misjudges a short description with wide fan-out. It now asserts measured bytes saved.
+- **Breaking:** `kimi_status` no longer advertises a live quota read. Its `rate_limit` block
+  always reports `unavailable` — kimi exposes no quota-read channel — so the description that
+  taught agents to plan spend around `available`/`limited`/`exhausted`/`blocked` described states
+  the server cannot produce. It now states the single reachable state and names
+  `kimi_rate_limited` as the only real throttling signal. The `RateLimit` schema keeps its
+  reserved fields, now documented as reserved.
+- Tool descriptions no longer say `kimi exec` or "read-only sandbox". kimi has no `exec`
+  subcommand and no sandbox; what constrains a read-only run is the generated agent profile.
+  `cli_contract.FORBIDDEN_SURFACE_PHRASES` now owns that ban and
+  `tests/test_surface_honesty.py` enforces it against the built manifest.
+- Binding rules in the rewritten prose are now structurally separated from their rationale,
+  after a `separating-context-from-constraints` audit found four R1 defects. The `RateLimit`
+  schema description carried two rules across two paragraphs with no rule section — they now
+  sit under a `RULES.` heading, with the rationale under `Why:` and the never-emitted fields
+  under `Reserved shape:`. `kimi_status`'s spend rule gained a `Spend:` label, matching the
+  `PAID —` / `Data egress:` blocks used everywhere else on this server. The `RateLimit`
+  Codex-provenance aside moved to an internal comment: it informs a maintainer, not a caller,
+  and it was shipping to clients as part of a schema description.
+- Four guards added by the changes above were hardened after an independent Codex review found
+  they overstated what they enforced. `test_status_result_rate_limit_is_structurally_unavailable`
+  asserted only the schema default factory, so `kimi_status()` could return `available` with the
+  test green; it is now a behavioral test across four readiness states. The repair-hint sweep's
+  hand-maintained exclusion list held a phantom (`kimi_failed`, never an `ErrorCode`) and let
+  prose like "retry kimi_rate_limited" pass; exclusions now derive from `ErrorCode`, `repair.tool`
+  is validated with no exemption, and call-phrases bind tighter than the code-name exemption.
+  The registration-saving test did character arithmetic against stale historical constants; it
+  now measures serialized UTF-8 bytes of `full` against `summary`, so no baseline can go stale.
+  Fan-out exemptions pin the byte cost they were granted at, so an exempt parameter cannot grow
+  without forcing a re-measurement. Each guard now has a mutation test proving it fails on its
+  target defect.
+- The `RateLimit` `RULES.` block said to treat "every field and state below" as unobservable,
+  contradicting the preceding sentence that `status: unavailable` is what you always get. It now
+  names that state as the single observable one.
+- `FINGERPRINT` is `moonbridge/0.1/schema-5`. `RESULT_FORMAT` is unchanged: only the `schemas`
+  view of the result-format snapshot moved, the `serialized` view is byte-identical, and no
+  stored job record can contain a removed code or the never-populated field.
+
 ### Added
 
 - Codex plugin and marketplace manifests, with Codex installation instructions and a shared,

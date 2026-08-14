@@ -20,6 +20,7 @@ from moonbridge import (
     kimi,
     orchestration,
     runspace,
+    schemas,
     server,
 )
 from moonbridge._core import worktree as _worktree_mod
@@ -392,17 +393,28 @@ def test_capability_summary_splits_inventory_from_model_discovery():
     )
 
 
-async def test_kimi_status_defers_with_prefer_not_a_bare_fact():
-    """#209 (pins #198): the rate-limit posture must state the default as a recommendation
-    an agent can act on — *prefer* to defer non-urgent calls when limited/exhausted, urgent
-    ones may proceed — not the bare fact that limited/exhausted "are reasons to defer",
-    which left the strength ambiguous (kimi_status docstring)."""
+async def test_kimi_status_states_an_actionable_rate_limit_posture():
+    """Successor to #209/#198, which pinned "prefer to defer non-urgent calls" when the
+    quota read was `limited`/`exhausted`. Those states turned out to be unreachable — kimi
+    exposes no quota channel, so the block is always `unavailable` — and the guidance was
+    telling agents to plan around a signal that never arrives.
+
+    The posture must still be actionable, which now means the opposite instruction: do not
+    plan spend around this block, and use the one signal that is real."""
     tools = {t.name: t for t in await server.mcp.list_tools()}
     # The docstring wraps across lines; normalize whitespace before matching the clause.
     desc = " ".join((tools["kimi_status"].description or "").split())
-    assert "prefer to defer non-urgent Kimi calls (urgent ones may still proceed)" in desc
-    # Regression guard: the complete pre-#198 bare-fact sentence must not return.
+    assert "always reports `unavailable`, and that is not a failure" in desc
+    # The rule carries a label, like every other directive block on this server
+    # (`PAID —`, `Free — no model call`, `Data egress:`). A separating-context-from-
+    # constraints audit found it as bare mid-paragraph prose; the label is the fix, so
+    # matching the label — not just the words — is what keeps the fix from regressing.
+    assert "Spend: do not plan spend around `rate_limit`" in desc
+    assert "kimi_rate_limited" in desc, "the one real quota signal must be named"
+    # Regression guards: neither the pre-#198 bare fact nor the #198 recommendation may
+    # return — both described states this server cannot emit.
     assert "are reasons to defer non-urgent Kimi calls" not in desc
+    assert "prefer to defer non-urgent Kimi calls" not in desc
 
 
 async def test_kimi_dry_run_frames_redaction_as_best_effort_not_confirmation():
@@ -2408,7 +2420,7 @@ def test_job_status_model_requires_result_ok_from_store():
 
 
 def test_fingerprint_is_pinned():
-    assert FINGERPRINT == "moonbridge/0.1/schema-1"
+    assert FINGERPRINT == "moonbridge/0.1/schema-5"
 
 
 def test_capabilities_payload_discloses_fingerprint_covers():
@@ -4200,7 +4212,14 @@ async def test_replay_normalizes_fingerprint_but_not_version(monkeypatch, clean_
         _ErrorResult(error=_make_error("job_failed", "x"), meta=_meta_for(tmp_path))
     )
     stored["meta"]["server_version"] = "0.1.0"
-    stored["meta"]["fingerprint"] = "moonbridge/0.1/schema-1"  # a pre-upgrade worker
+    # DELIBERATELY not the current FINGERPRINT, and never updated to track it: the whole
+    # point is that a STALE stored id gets rewritten. This literal read "schema-1" while
+    # FINGERPRINT was also schema-1, so the test passed with normalization disabled — it
+    # could not fail (Copilot review). A blanket fingerprint bump then carried the defect
+    # forward. The assertion below pins the invariant so that cannot recur silently.
+    stale = "moonbridge/0.0/never-current"
+    assert stale != FINGERPRINT, "the planted fingerprint must differ from the current one"
+    stored["meta"]["fingerprint"] = stale  # a pre-upgrade worker
     store = _FakeStore(record=_ok_record("done"), result_json=stored)
     monkeypatch.setattr(server.config, "job_store", lambda: store)
     res = await server.kimi_job_result("job-abc", workspace_root=str(tmp_path))
@@ -6220,26 +6239,9 @@ def test_capabilities_advertise_idempotency_on_spend_committing_tools(clean_env)
         assert "idempotency_conflict" in by_name[name]["error_codes"], name
 
 
-# --- kimi_transfer -------------------------------------------------------------
-
-
-def _ready_kimi(monkeypatch):
-    monkeypatch.setattr(server.kimi, "kimi_version", lambda: "0.35.0")
-    monkeypatch.setattr(
-        server.kimi, "login_status", lambda: (True, "Kimi reports 1 configured provider(s).")
-    )
-
-
-# --- transfer's invalid_arguments shape (#416) --------------------------------
-# The hand-raised rejection emitted only `details.field`, so a client branching on the
-# per-argument list `docs/REFERENCE.md:34-35` promises for this code found it absent.
-# Expected values below are LITERAL, not read back off the envelope: an assertion that
-# `details.reason == invalid_arguments[0].reason` passes while both are wrong.
-
-_TRANSCRIPT_REASON = "transcript_path must be a .jsonl session transcript."
-
-
-# --- app_server_stderr_tail: surfaced only where it is the primary diagnostic (#275) ------
+# NOTE: the kimi_transfer scaffolding that stood here (`_ready_kimi`, `_TRANSCRIPT_REASON`,
+# and the app_server_stderr_tail section header) went out with the transfer codes — its
+# tests had already been deleted, leaving helpers no case called.
 
 
 # --- MOONBRIDGE_EXTRA_ARGS: status + preflight before spend (#231) -----------
@@ -7254,14 +7256,20 @@ class TestSpendMarkers:
 
         Backticks are optional in the match: the PAID blocks mention `kimi_dry_run`,
         `kimi_delegate_dry_run`, and `kimi_status` in plain prose (no backticks), and a
-        sweep that only saw backticked mentions would miss a rename of exactly those."""
+        sweep that only saw backticked mentions would miss a rename of exactly those.
+
+        Error codes share the `kimi_` prefix (`kimi_rate_limited`, `kimi_not_found`), and a
+        description may legitimately name one. They are excluded from the published
+        ErrorCode Literal rather than by a hand-kept list, so a code that is later promoted
+        to a tool name — or deleted — stays covered without editing this test."""
         async with Client(server.mcp) as c:
             tools = {t.name: (t.description or "") for t in await c.list_tools()}
         names = set(tools)
+        codes = set(schemas.ErrorCode.__args__)
         bad = []
         for name, desc in tools.items():
             for mentioned in re.findall(r"`?(kimi_[a-z_]+)`?", desc):
-                if mentioned not in names:
+                if mentioned not in names and mentioned not in codes:
                     bad.append(f"{name} mentions unregistered tool {mentioned!r}")
         assert not bad, "; ".join(bad)
 

@@ -3,7 +3,7 @@
 Both the synchronous tools in ``server.py`` and the detached ``_worker.py`` call
 these, so this module must NOT import the FastMCP app (``server``) — like
 ``delegate.run_delegate`` for the propose tier. It builds the prompt, runs
-``kimi exec``, and finalizes the structured result envelope. For review it also
+``kimi -p``, and finalizes the structured result envelope. For review it also
 gathers and validates the diff *before* any model call, so an async review job that
 hits a bad scope/base/commit spends nothing.
 """
@@ -136,7 +136,7 @@ def _stamp_meta(result: kimi.KimiRunResult, meta: Meta) -> dict | None:
     usage, session_id = normalize.parse_event_metadata(result.events)
     meta.usage = usage
     meta.session_id = session_id
-    # meta.rate_limit stays None: kimi 0.144 no longer emits quota on the exec stream (#321).
+    # meta.rate_limit stays None: kimi 0.144 no longer emits quota on the prompt-mode stream (#321).
     # Quota is fetched live (no model spend) by kimi_status via account/rateLimits/read, not
     # per paid run — a second app-server spawn on every call would add latency for no benefit.
     if result.run.exit_code != 0 or result.run.binary_missing or result.run.timed_out:

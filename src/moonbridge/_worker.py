@@ -1,7 +1,7 @@
 """Detached background worker for the propose tier.
 
 Invoked as ``python -m moonbridge._worker <job_dir>`` by the JobStore. Reads
-``<job_dir>/spec.json``, runs the propose orchestration (worktree → kimi exec →
+``<job_dir>/spec.json``, runs the propose orchestration (worktree → kimi -p →
 diff → cleanup) via :func:`moonbridge.delegate.run_delegate`, and writes the
 final result envelope to ``<job_dir>/result.json`` (atomically). It is import-light
 — it does NOT construct the FastMCP app.
@@ -204,7 +204,7 @@ def _activity_observer(
 
 async def _run(job_dir: Path, spec: dict, meta: Meta) -> dict:
     """Dispatch the job by kind, cancelling cleanly on SIGTERM so an in-flight
-    `kimi exec` (and, for delegate, the worktree teardown) is torn down. The
+    `kimi -p` (and, for delegate, the worktree teardown) is torn down. The
     JobStore sends SIGTERM (then SIGKILL after a grace) to cancel or time out."""
     loop = asyncio.get_running_loop()
     task = asyncio.current_task()

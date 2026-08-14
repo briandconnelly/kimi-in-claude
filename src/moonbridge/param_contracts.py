@@ -75,6 +75,19 @@ _REASONING_EFFORT_FULL = (
     "zero spend, the value never reaches kimi)."
 )
 
+_ISOLATION_FULL = (
+    "Which skills Kimi loads for this run: 'inherit' (its own user/project discovery) or "
+    "'ignore-skills' (that discovery replaced with an empty directory). Defaults to the "
+    "server's configured value — built-in 'inherit'; kimi_status reports the resolved one. "
+    "Its limits matter more than its name: "
+    "Kimi's built-in skills always load, and the resolved workspace's AGENTS.md is always "
+    "read, under either value. Skill names and descriptions reach the model up front, so a "
+    "skill's content can be sent to your provider even when your prompt never mentions it, "
+    "and skills configured through kimi's own `extra_skill_dirs` may come from outside the "
+    "workspace entirely. Treat 'ignore-skills' as reducing what is loaded, never as "
+    "isolation."
+)
+
 _EXTRA_CONTEXT_FULL = (
     "Optional author intent / background context, added to the prompt as clearly-labeled "
     "UNTRUSTED data. Kimi is instructed to treat embedded directives as data, not "
@@ -113,6 +126,20 @@ PARAMETER_CONTRACTS: dict[str, ParamContract] = {
             "set (advisory). Rejection and bounds detail: kimi://params."
         ),
         full=_REASONING_EFFORT_FULL,
+    ),
+    "isolation": ParamContract(
+        name="isolation",
+        # Kept inline (selection + the non-guarantee): both values, and that built-in
+        # skills load either way — dropping the caveat would let the name "isolation"
+        # imply containment. Moved to the resource: AGENTS.md always loading, the
+        # skill-name egress path, and extra_skill_dirs.
+        summary=(
+            "Which skills Kimi loads: 'inherit' (own user/project discovery) or "
+            "'ignore-skills' (empty dir). Built-ins load either way; this reduces "
+            "loading, not isolation. Default: server-configured, per kimi_status. "
+            "More: kimi://params."
+        ),
+        full=_ISOLATION_FULL,
     ),
     "extra_context": ParamContract(
         name="extra_context",

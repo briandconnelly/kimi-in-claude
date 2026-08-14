@@ -1,4 +1,4 @@
-"""Feature-detect which `kimi exec` flags exist, by parsing its --help once.
+"""Feature-detect which `kimi -p` flags exist, by parsing its --help once.
 
 Only the HELP_GATED flags (depth/cosmetic) are gated on this probe: dropping one
 when absent keeps the server working across a minor upstream change. The

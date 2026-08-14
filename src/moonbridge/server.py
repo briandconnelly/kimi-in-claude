@@ -765,13 +765,7 @@ PathsParam = Annotated[
 ]
 IsolationParam = Annotated[
     Isolation | None,
-    Field(
-        description="Kimi skills isolation: which skills Kimi loads — 'inherit' (its own "
-        "user/project discovery) "
-        "or 'ignore-skills' (replace those with an empty directory). Kimi's built-in skills "
-        "load either way. Defaults to the server's configured value (built-in 'inherit'; "
-        "`kimi_status` reports the resolved one)."
-    ),
+    Field(description=param_contracts.PARAMETER_CONTRACTS["isolation"].summary),
 ]
 ScopeParam = Annotated[
     ReviewScope,
@@ -1322,21 +1316,11 @@ def kimi_status() -> dict:
     version, and report the resolved defaults. Free — no model call. Run it before
     your first paid call in a session to confirm setup, and again whenever a run
     fails with a setup error.
-    Also reports a `rate_limit` block — how much of the Kimi quota windows remains,
-    fetched LIVE from `kimi app-server` (a read-only call with no model spend). `primary`
-    is the shorter/rolling window, `secondary` the longer one; the account reports only the
-    windows that currently bind it, so either may be null. Use it to decide whether to spend:
-    `available` is deliberately conservative (only when every reported window is healthy);
-    when `limited`/`exhausted`, prefer to defer non-urgent Kimi calls (urgent ones may still
-    proceed); `unknown` means the live read couldn't complete just now (retry) or only a stale
-    cache was available; `unavailable` means this kimi/account exposes no quota data — none
-    of these means anything is wrong.
-    `blocked` is different: the backend reports a SPEND control (`spend_control_reached: true`),
-    so paid calls will fail and waiting for a quota reset will NOT clear it — don't defer, and
-    surface it to the user. `spend_control_reached` is null when this kimi/backend didn't report
-    that state (then `available` covers the quota windows only, and `note` says so).
-    `is_stale`/`as_of` show freshness; `home_unverified` flags a snapshot from a different
-    KIMI_CODE_HOME."""
+    Spend: do not plan spend around `rate_limit` — it always reports `unavailable`, and that
+    is not a failure. kimi exposes no quota-read channel and its provider is user-configured,
+    so there is nothing authoritative to report. The only quota signal this server can give
+    you is the `kimi_rate_limited` error on a call that was actually throttled; it carries
+    `retry_after_ms`."""
     d = config.defaults()
     version = kimi.kimi_version()
     found = version is not None
@@ -1354,7 +1338,7 @@ def kimi_status() -> dict:
     flags_warning = None
     if missing:
         flags_warning = (
-            f"`kimi exec --help` did not list expected flags: {', '.join(missing)}. "
+            f"`kimi --help` did not list expected flags: {', '.join(missing)}. "
             "The CLI contract may have drifted; an update to moonbridge may be needed."
         )
 
@@ -2113,7 +2097,7 @@ def kimi_models() -> dict:
 
     Advisory discovery only: read from Kimi's on-disk cache when present, else a
     bundled fallback (`source` says which; the fallback carries no effort data).
-    `kimi exec` validates the real slug and the backend validates the real effort, so
+    The kimi CLI validates the real slug and the backend validates the real effort, so
     an unlisted value may still work and a listed one may be unavailable to your
     account. Same payload as the kimi://models resource. Not fingerprint-stable — do
     not cache it by the capabilities fingerprint."""
@@ -2647,9 +2631,9 @@ async def kimi_consult(
     consult, so run kimi_status (free) first to confirm the CLI is installed and
     authenticated.
 
-    Runs `kimi exec` in a read-only sandbox — Kimi never edits files. A STATIC
-    review, not a verify mode: the read-only sandbox blocks the writes a
-    test/build/lint run needs, so Kimi can't run your checks to confirm its claims —
+    Runs `kimi -p` under a generated read-only agent profile — Kimi holds no shell and
+    no write tool, so it never edits files. A STATIC review, not a verify mode: without
+    those tools it cannot run a test/build/lint pass to confirm its claims —
     treat findings as unvalidated claims you verify yourself. Pass `workspace_root`
     (absolute) for a repo-grounded question; omit it for pure Q&A. Returns a result
     envelope.
@@ -2754,9 +2738,9 @@ async def kimi_review_changes(
     actually ran and what it was shown: a `pass` over partial coverage is surfaced as
     `unknown`, and a tree with nothing reviewable returns `not_run`, never a `pass`.
 
-    STATIC review, not a verify mode: the read-only sandbox blocks the writes a
-    test/build/lint run needs, so Kimi can't run the project's checks to confirm its
-    findings — treat them as unvalidated claims you verify yourself before acting.
+    STATIC review, not a verify mode: the read-only agent profile gives Kimi no shell
+    and no write tool, so it cannot run the project's checks to confirm its findings —
+    treat them as unvalidated claims you verify yourself before acting.
 
     Data egress: this sends the gathered diff to your configured provider via the
     kimi CLI. The diff is
