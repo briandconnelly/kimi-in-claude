@@ -5,6 +5,14 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Fixed
+
+- Multi-line private-key blocks (PEM/PKCS8/OpenSSH/PGP) in gathered diffs and
+  returned prose are now redacted statefully (via pontifex 0.4.0): the
+  BEGIN/END markers stay visible, every body line between them is dropped, and
+  an unterminated block fails closed. Previously only the BEGIN marker was
+  masked while the entire base64 body was sent.
+
 ### Added
 
 - `cli_contract.PONTIFEX_CONTRACT` — the declarative CLI contract in the shared
