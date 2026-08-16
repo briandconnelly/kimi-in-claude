@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import re
 
+from pontifex.backend import contract as _pontifex_contract
+
 KIMI_BIN = "kimi"
 
 # --- Core non-interactive invocation ---------------------------------------------------
@@ -367,3 +369,52 @@ def parse_retry_after_ms(*texts: str | None) -> int | None:
             return int(value * 60_000)
         return int(value * 1000)
     return None
+
+
+# --- Shared-library contract (pontifex) -------------------------------------------
+# The declarative half of this contract, in the shared shape the pontifex
+# conformance/honesty kits consume. Values are DERIVED from the constants above —
+# tests/test_surface_honesty.py pins the derivations so the two can never drift.
+# Behavior (handshake staging, classification) still lives in kimi.py; migrating it
+# onto the pontifex AgentBackend lifecycle is the planned next step while the
+# protocol is provisional.
+PONTIFEX_CONTRACT = _pontifex_contract.BackendContract(
+    backend_id="kimi",
+    display_name="Kimi",
+    bin_name=KIMI_BIN,
+    env_prefix="MOONBRIDGE_",
+    exec_argv_prefix=EXEC_SUBCOMMAND,
+    always_send_flags=ALWAYS_SEND_FLAGS,
+    help_gated_flags=tuple(sorted(HELP_GATED_FLAGS)),
+    forbidden_surface_phrases=FORBIDDEN_SURFACE_PHRASES,
+    supported_features=frozenset({"delegate", "model_validation", "empty_response_detection"}),
+    readonly_honesty_statement=READ_ONLY_CONFIDENTIALITY_LIMIT,
+    implicit_context_disclosure=SKILLS_DISCOVERY_FACT_FULL,
+    structured_output="prompt_append",
+    model_catalog=_pontifex_contract.ModelCatalog(
+        strategy="live_probe",
+        # kimi rejects an unknown alias outright (invalid_model), but only ADVISES
+        # on whether a given effort is honoured — see kimi_models.supported_efforts_for.
+        model_identifier_authority="authoritative",
+        effort_metadata_authority="advisory",
+    ),
+    isolation_policy=_pontifex_contract.IsolationPolicy.WORKTREE_ALL_TIERS,
+    needs_orphan_sweep=True,
+    # Verified on 0.35.0: kimi SILENTLY IGNORES an unrecognized
+    # KIMI_MODEL_THINKING_EFFORT (exits 0, answers at the model's default), so
+    # pre-spend local validation is the only protection.
+    effort_silently_ignored_upstream=True,
+    usage_event_markers=USAGE_EVENT_MARKERS,
+    extra_args=_pontifex_contract.ExtraArgsPolicy(),  # empty = refuse loudly (see config)
+    failure_signatures=_pontifex_contract.FailureSignatures(
+        auth=tuple(f"(?i){p.pattern}" for p in _AUTH_PATTERNS),
+        contract_drift=tuple(f"(?i){p.pattern}" for p in _DRIFT_PATTERNS),
+        invalid_model=(f"(?i){_INVALID_MODEL_PATTERN.pattern}",),
+        rate_limited=tuple(f"(?i){p.pattern}" for p in _RATE_LIMIT_PATTERNS),
+    ),
+    limits=_pontifex_contract.Limits(
+        max_argv_prompt_chars=MAX_ARGV_PROMPT_CHARS,
+        handshake_dir_name=HANDSHAKE_DIR_NAME,
+        answer_file_name=ANSWER_FILE_NAME,
+    ),
+)

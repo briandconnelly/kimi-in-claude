@@ -5,6 +5,20 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Added
+
+- `cli_contract.PONTIFEX_CONTRACT` — the declarative CLI contract in the shared
+  `BackendContract` shape, derivation-pinned against the legacy constants
+  (including the verified silent-effort-ignore fact and field-scoped catalog
+  authority: aliases authoritative, effort metadata advisory).
+- `backend.KimiBackend` — this bridge's adapter on the provisional pontifex
+  `AgentBackend` protocol, with an argv-differential test against the
+  production command builder and a fail-open catalog-relative effort guard
+  matching the server's stance. Runspace re-plumbing lands with the protocol
+  freeze.
+- The surface-honesty phrase scan now runs through `pontifex.testing`; the
+  moonbridge-specific quota/transfer/repair-hint honesty checks are unchanged.
+
 ### Removed
 
 - Codex-port residue that outlived the fork, none of it wire-visible: the inert
