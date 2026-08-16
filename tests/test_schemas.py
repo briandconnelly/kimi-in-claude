@@ -122,7 +122,6 @@ VERSION_BEARING_MODELS = (
     "StatusResult",
     "CapabilitiesResult",
     "ModelCatalogResult",
-    "TransferResult",
     "JobStarted",
     "JobStatus",
     "DryRunResult",

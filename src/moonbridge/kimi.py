@@ -11,8 +11,9 @@ The two guarantees this module is responsible for:
   standing between a consult and an unrestricted agent — the worktree is not a boundary
   (see cli_contract). `build_exec_command` therefore refuses to build a read-only command
   without it rather than silently emitting an unrestricted one.
-* **Gathered context never rides argv.** The prompt is written into the worktree and argv
-  carries a short pointer, because kimi ignores stdin and crashes past ~950k argv chars.
+* **Gathered context never rides argv.** The prompt is written to a handshake file
+  OUTSIDE the workspace and argv carries a short pointer, because kimi ignores stdin
+  and crashes past ~950k argv chars.
 """
 
 from __future__ import annotations
@@ -119,7 +120,7 @@ def build_exec_command(
     `prompt_pointer` is the SHORT argv prompt — typically an instruction to read the
     handshake prompt file. Gathered context must never be inlined here: kimi ignores stdin
     and dies with a Node RangeError past ~950k argv chars, so the caller writes the real
-    prompt to a file inside the worktree.
+    prompt to a handshake file outside the workspace.
 
     `agent_file_path` is REQUIRED when sandbox is read-only. Without it the run would hold
     the full tool set, and since the worktree is not a boundary that would silently turn a
@@ -259,9 +260,6 @@ async def run_kimi_exec(
     model: str | None = None,
     reasoning_effort: str | None = None,
     output_schema: dict | None = None,
-    add_dirs: tuple[str, ...] = (),
-    skip_git_repo_check: bool = False,
-    ephemeral: bool = True,
     flag_support: FlagSupport | None = None,
     on_event: Callable[[str], None] | None = None,
 ) -> KimiRunResult:
@@ -271,12 +269,7 @@ async def run_kimi_exec(
     sandbox. `output_schema`, when given, is appended to the prompt as an instruction —
     kimi has no --output-schema flag, so structured output is prompt-requested and parsed
     tolerantly downstream (normalize.parse_structured), never assumed.
-
-    `add_dirs`, `skip_git_repo_check`, and `ephemeral` are accepted for call-site
-    compatibility with the Codex-shaped orchestration and are intentionally unused: kimi
-    has no equivalent flags, and --add-dir would defeat worktree isolation.
     """
-    _ = (add_dirs, skip_git_repo_check, ephemeral)
     read_only = sandbox == cli_contract.SANDBOX_READ_ONLY
 
     prompt_text = prompt

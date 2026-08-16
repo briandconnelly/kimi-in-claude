@@ -140,7 +140,9 @@ READ_ONLY_CONFIDENTIALITY_LIMIT = (
 FORBIDDEN_SURFACE_PHRASES = ("kimi exec", "read-only sandbox")
 
 # --- The file handshake ----------------------------------------------------------------
-# Written inside the worktree, under a single dot-directory kept out of any captured diff.
+# Written OUTSIDE the workspace (a mkdtemp dir; symlink defense — see kimi.create_handshake_dir).
+# HANDSHAKE_DIR_NAME survives as the worktree diff-exclusion literal
+# (config.WORKTREE_CONFIG.extra_excludes) for defense in depth.
 HANDSHAKE_DIR_NAME = ".moonbridge"
 PROMPT_FILE_NAME = "prompt.md"
 # Only the propose tier can produce this: a read-only agent has no Write tool.
@@ -179,11 +181,6 @@ SANDBOX_READ_ONLY = "read-only"
 SANDBOX_WORKSPACE_WRITE = "workspace-write"
 SANDBOX_DANGER_FULL = "danger-full-access"
 VALID_SANDBOXES = (SANDBOX_READ_ONLY, SANDBOX_WORKSPACE_WRITE, SANDBOX_DANGER_FULL)
-
-# Codex's `--disable remote_plugin` has no kimi equivalent; kept as inert names so callers
-# referencing them keep type-checking while the disclosure prose carries the real story.
-DISABLE_FEATURE_FLAG = ""
-REMOTE_PLUGIN_FEATURE = ""
 
 # --- Versions --------------------------------------------------------------------------
 SUPPORTED_VERSIONS = frozenset({(0, 35)})
@@ -345,21 +342,6 @@ def is_invalid_model(*texts: str | None) -> bool:
 def is_rate_limited(*texts: str | None) -> bool:
     """Whether the configured provider reported a usage/rate limit."""
     return _any(_RATE_LIMIT_PATTERNS, texts)
-
-
-def is_reasoning_effort_rejection(*texts: str | None) -> bool:
-    """Whether the failure names the effort surface specifically.
-
-    Requires BOTH an effort marker and an effort-looking token, so an unrelated message
-    mentioning the word "effort" cannot steal the classification.
-    """
-    blob = "\n".join(t for t in texts if t)
-    if not blob:
-        return False
-    lowered = blob.lower()
-    if not any(m.lower() in lowered for m in REASONING_EFFORT_REJECTION_MARKERS):
-        return False
-    return REASONING_EFFORT_TOKEN_PATTERN.search(blob) is not None
 
 
 def parse_retry_after_ms(*texts: str | None) -> int | None:

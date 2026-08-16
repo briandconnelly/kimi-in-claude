@@ -5,6 +5,18 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Removed
+
+- Codex-port residue that outlived the fork, none of it wire-visible: the inert
+  `DISABLE_FEATURE_FLAG`/`REMOTE_PLUGIN_FEATURE` names, `run_kimi_exec`'s
+  accepted-but-unused `add_dirs`/`skip_git_repo_check`/`ephemeral` parameters,
+  the dead `TransferMeta`/`TransferResult`/`TRANSFER_SCHEMA` models (no
+  `kimi_transfer` tool exists), the uncalled
+  `cli_contract.is_reasoning_effort_rejection` predicate, and stale docstrings
+  describing an in-worktree handshake and an `--output-last-message` answer
+  channel that kimi does not have (the handshake lives outside the workspace;
+  the answer comes from the event stream / answer file).
+
 ### Changed
 
 - Generic core machinery (`jobs`, `worktree`, `gitdiff`, `redaction`, `runtime`,
