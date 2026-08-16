@@ -94,6 +94,7 @@ def _worktree_error_envelope(exc: Exception, meta: Meta) -> dict:
 async def run_isolated(
     prompt: str,
     *,
+    kind: str,
     cwd: str,
     meta: Meta,
     sandbox: str,
@@ -127,6 +128,7 @@ async def run_isolated(
         with tempfile.TemporaryDirectory(prefix=config.WORKTREE_CONFIG.prefix) as tmp:
             result = await _invoke(
                 prompt,
+                kind=kind,
                 run_dir=tmp,
                 meta=meta,
                 sandbox=sandbox,
@@ -160,6 +162,7 @@ async def run_isolated(
     try:
         result = await _invoke(
             prompt,
+            kind=kind,
             run_dir=wt.path,
             meta=meta,
             sandbox=sandbox,
@@ -190,6 +193,7 @@ async def run_isolated(
 async def _invoke(
     prompt: str,
     *,
+    kind: str,
     run_dir: str,
     meta: Meta,
     sandbox: str,
@@ -202,6 +206,7 @@ async def _invoke(
 ) -> kimi.KimiRunResult:
     result = await kimi.run_kimi_exec(
         prompt,
+        kind=kind,
         cwd=run_dir,
         sandbox=sandbox,
         isolation=isolation,

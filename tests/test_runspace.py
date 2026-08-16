@@ -88,6 +88,7 @@ async def test_consult_runs_under_the_read_only_agent(tmp_path, fake_kimi):
     repo = _repo(tmp_path)
     outcome = await runspace.run_isolated(
         "is this sound?",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -107,6 +108,7 @@ async def test_consult_leaves_the_real_working_tree_byte_identical(tmp_path, fak
     before = _tree_state(repo)
     await runspace.run_isolated(
         "is this sound?",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -125,6 +127,7 @@ async def test_consult_does_not_run_in_the_real_repo(tmp_path, fake_kimi):
     repo = _repo(tmp_path)
     await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -141,6 +144,7 @@ async def test_the_worktree_is_removed_afterwards(tmp_path, fake_kimi):
     repo = _repo(tmp_path)
     await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -167,6 +171,7 @@ async def test_handshake_dir_never_reaches_a_captured_diff(tmp_path, monkeypatch
     repo = _repo(tmp_path)
     outcome = await runspace.run_isolated(
         "add mul",
+        kind="consult",
         cwd=str(repo),
         meta=Meta(
             cwd="/x",
@@ -194,6 +199,7 @@ async def test_non_repo_consult_is_isolated_and_discloses_it(tmp_path, fake_kimi
     meta = _meta()
     outcome = await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(plain),
         meta=meta,
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -214,6 +220,7 @@ async def test_non_repo_consult_without_allow_non_repo_errors(tmp_path, fake_kim
     plain.mkdir()
     outcome = await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(plain),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,

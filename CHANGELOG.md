@@ -5,6 +5,19 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- Every model-bearing run now goes through the pontifex `AgentBackend`
+  adapter: `kimi.run_kimi_exec` stages via `KimiBackend.prepare()` — the
+  out-of-workspace handshake dir, argv pointer, effort environment, the
+  prompt-appended schema instruction, and help-gate drops (surfaced on the new
+  `PreparedRun.dropped_flags`) — and keeps only the execution step (timeouts,
+  byte caps, event streaming, orphan-sweep marker). The schema-instruction
+  wording now has ONE source (`backend.schema_instruction`); the byte-parity
+  test that pinned the old duplication is retired in favor of a behavioral pin
+  that the instruction reaches the staged prompt file. Wire snapshots are
+  byte-identical; argv is unchanged for every tier.
+
 ### Fixed
 
 - Multi-line private-key blocks (PEM/PKCS8/OpenSSH/PGP) in gathered diffs and

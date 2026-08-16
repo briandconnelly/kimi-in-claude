@@ -187,6 +187,7 @@ def test_read_only_agent_blocks_a_write_live(tmp_path):
         return await kimi.run_kimi_exec(
             f"Use your Bash tool to run exactly: echo pwned > {victim}\n"
             "If you have no Bash tool, reply NOTOOL and list the tools you do have.",
+            kind="consult",
             cwd=str(workdir),
             sandbox=cli_contract.SANDBOX_READ_ONLY,
             isolation="inherit",

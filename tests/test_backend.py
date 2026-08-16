@@ -45,19 +45,25 @@ def test_backend_passes_pontifex_conformance(clean_env):
     assert conformance.check_backend(PONTIFEX_CONTRACT, BACKEND) == []
 
 
-def test_schema_instruction_matches_run_kimi_exec_inline_text():
-    """The duplicated prompt-append wording must stay byte-identical to the inline
-    text in run_kimi_exec until pontifex 0.3.0 gives it a shared seam."""
-    import inspect
+async def test_schema_instruction_reaches_the_staged_prompt_file(tmp_path, clean_env):
+    """The prompt-append wording has ONE source now — `schema_instruction`, owned by
+    the adapter since the re-plumb dissolved run_kimi_exec's inline copy. What must
+    hold is behavioral: a schema-bearing request stages a prompt file carrying the
+    instruction, read inside the prepare context (staging is torn down on exit)."""
+    from pathlib import Path
 
-    src = inspect.getsource(kimi.run_kimi_exec)
-    for fragment in (
-        "# Required output format",
-        "Reply with a single JSON object and nothing else — no prose, no code fence. ",
-        "It must validate against this JSON Schema:",
-    ):
-        assert fragment in src
-        assert fragment in backend_mod.schema_instruction({"type": "object"})
+    request = RunRequest(
+        kind="consult",
+        prompt="the question",
+        cwd=str(tmp_path),
+        timeout_seconds=60,
+        schema={"type": "object"},
+    )
+    async with BACKEND.prepare(request) as prepared:
+        staged = Path(prepared.artifact_paths["prompt"]).read_text(encoding="utf-8")
+    assert staged.startswith("the question")
+    assert backend_mod.schema_instruction({"type": "object"}) in staged
+    assert "# Required output format" in staged
 
 
 async def test_prepared_argv_matches_production_builder(tmp_path, clean_env):

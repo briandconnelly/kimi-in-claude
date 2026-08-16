@@ -21,13 +21,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from stat import S_ISREG
 from typing import TYPE_CHECKING
 
+from pontifex.backend.protocol import RunRequest
 from pontifex.core import redaction, runtime
 
 from moonbridge import cli_contract, config, normalize, preflight
@@ -253,6 +253,7 @@ def build_prompt_pointer(paths: dict[str, str], *, read_only: bool) -> str:
 async def run_kimi_exec(
     prompt: str,
     *,
+    kind: str,
     cwd: str,
     sandbox: str,
     isolation: str,
@@ -260,62 +261,53 @@ async def run_kimi_exec(
     model: str | None = None,
     reasoning_effort: str | None = None,
     output_schema: dict | None = None,
-    flag_support: FlagSupport | None = None,
     on_event: Callable[[str], None] | None = None,
 ) -> KimiRunResult:
-    """Run `kimi -p` in `cwd`, managing the handshake files.
+    """Run `kimi -p` in `cwd` through the KimiBackend adapter lifecycle.
 
-    `cwd` MUST already be an isolated worktree: every tier runs in one, because kimi has no
-    sandbox. `output_schema`, when given, is appended to the prompt as an instruction —
-    kimi has no --output-schema flag, so structured output is prompt-requested and parsed
-    tolerantly downstream (normalize.parse_structured), never assumed.
+    `cwd` MUST already be an isolated worktree: every tier runs in one, because kimi has
+    no sandbox. The adapter's `prepare()` stages everything — the out-of-workspace
+    handshake dir (prompt file, read-only agent profile or answer file), the argv
+    pointer, the effort environment, the prompt-appended schema instruction, help-gate
+    drops — and tears it down on context exit, so the answer file is resolved inside the
+    context. This function owns only the execution step: `runtime.run_async` with this
+    bridge's timeout/byte caps, event streaming, and the orphan-sweep marker. `kind` is
+    the canonical verb ("consult" | "review_changes" | "delegate").
     """
-    read_only = sandbox == cli_contract.SANDBOX_READ_ONLY
+    # Runtime import: backend.py imports this module's builders, so a top-level
+    # import here would be a cycle. Cached by the import system after first use.
+    from moonbridge.backend import BACKEND  # noqa: PLC0415
 
-    prompt_text = prompt
-    if output_schema is not None:
-        prompt_text += (
-            "\n\n# Required output format\n"
-            "Reply with a single JSON object and nothing else — no prose, no code fence. "
-            "It must validate against this JSON Schema:\n\n"
-            f"{json.dumps(output_schema, indent=2)}\n"
-        )
-
-    handshake_dir = create_handshake_dir()
-    try:
-        paths = write_handshake(handshake_dir, prompt_text, read_only=read_only)
-        cmd, dropped = build_exec_command(
-            cwd=cwd,
-            sandbox=sandbox,
-            isolation=isolation,
-            prompt_pointer=build_prompt_pointer(paths, read_only=read_only),
-            model=model,
-            agent_file_path=paths.get("agent"),
-            skills_dir=config.skills_dir_for(isolation),
-            extra_args=config.extra_args().tokens,
-            flag_support=flag_support,
-        )
+    request = RunRequest(
+        kind=kind,
+        prompt=prompt,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        schema=output_schema,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        access=sandbox,
+        isolation=isolation,
+    )
+    async with BACKEND.prepare(request) as prepared:
         run = await runtime.run_async(
-            cmd,
-            cwd=cwd,
+            list(prepared.argv),
+            cwd=prepared.cwd,
             timeout_seconds=timeout_seconds,
-            stdin_text=None,
+            stdin_text=prepared.stdin_text,
             on_stdout_line=on_event,
             max_output_bytes=config.max_output_bytes(),
-            env=build_run_env(reasoning_effort),
-            # kimi's Bash tool spawns each command in its own process group, so a killpg on
-            # timeout/cancel leaves those running (verified on 0.35.0). The stray's command
-            # line embeds this cwd verbatim (`/bin/bash -c cd '<worktree>' && ...`), and
-            # every run gets a unique worktree, so it is a safe and sufficient sweep key.
-            orphan_marker=cwd if len(cwd) >= runtime.MIN_ORPHAN_MARKER_LENGTH else None,
+            env=prepared.env,
+            orphan_marker=prepared.orphan_marker,
         )
-        last_message = _resolve_answer(paths.get("answer"), run.stdout)
-    finally:
-        # Always: the prompt file can carry the gathered diff, and the answer file whatever
-        # kimi wrote. Neither should outlive the run on disk.
-        shutil.rmtree(handshake_dir, ignore_errors=True)
+        # Inside the context on purpose: the handshake dir (and with it the answer
+        # file) is torn down when prepare() exits.
+        last_message = _resolve_answer(prepared.artifact_paths.get("answer"), run.stdout)
     return KimiRunResult(
-        run=run, last_message=last_message, events=run.stdout, dropped_flags=dropped
+        run=run,
+        last_message=last_message,
+        events=run.stdout,
+        dropped_flags=list(prepared.dropped_flags),
     )
 
 

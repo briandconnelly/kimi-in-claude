@@ -2,24 +2,17 @@
 
 A faithful thin layer over the proven functions in `kimi.py` — handshake
 staging, command construction, extraction, and classification delegate to the
-same code `run_kimi_exec` runs, so the adapter cannot drift from production
-behavior. Its job today is real-adapter validation of the PROVISIONAL protocol
-(pontifex freezes only after all three bridges' adapters fit); re-plumbing
-runspace/orchestration through it lands with the freeze.
+same code they always ran. Since the freeze-window re-plumb, this adapter IS
+the hot path: `kimi.run_kimi_exec` stages every model-bearing run through
+`prepare()`, so the adapter can no longer drift from production behavior — it
+is production behavior. That re-plumb also DISSOLVED the schema-instruction
+duplication this module used to pin with a parity test: the prompt-append
+wording now lives only in `schema_instruction` below.
 
-Protocol-fit findings for pontifex 0.3.0, discovered here:
-
-* Catalog-relative effort validation fails OPEN when the alias's supported set
-  is unknowable (`supported_efforts_for` returns None — deliberately never read
-  as "nothing allowed"). The conformance invariant "reject a bogus effort
-  pre-spend" is therefore stronger than the server's guard; this adapter adds
-  kimi's universal effort-token floor (low|medium|high|max) so a value matching
-  NO kimi vocabulary is refused even without catalog knowledge. The protocol
-  should let a contract declare catalog-relative validation.
-* The schema-append instruction text lives inline in `run_kimi_exec`, not in a
-  named function — the prompt_append strategy needs a shareable seam before the
-  adapter can own structured output without duplicating the wording (duplicated
-  here for now, pinned by a parity test).
+Protocol-fit history: the catalog-relative effort-validation finding landed as
+`BackendContract.effort_validation` (pontifex 0.3.0); the named-artifact and
+dropped-flags channels this hot path needs landed as
+`PreparedRun.artifact_paths`/`.dropped_flags` (0.4.0).
 """
 
 from __future__ import annotations
@@ -95,7 +88,7 @@ class KimiBackend:
         handshake_dir = kimi.create_handshake_dir()
         try:
             paths = kimi.write_handshake(handshake_dir, prompt_text, read_only=read_only)
-            cmd, _dropped = kimi.build_exec_command(
+            cmd, dropped = kimi.build_exec_command(
                 cwd=request.cwd,
                 sandbox=cli_contract.SANDBOX_READ_ONLY
                 if read_only
@@ -116,6 +109,8 @@ class KimiBackend:
                 if len(request.cwd) >= runtime.MIN_ORPHAN_MARKER_LENGTH
                 else None,
                 artifacts=tuple(paths.values()),
+                artifact_paths=dict(paths),
+                dropped_flags=tuple(dropped),
             )
         finally:
             shutil.rmtree(handshake_dir, ignore_errors=True)
@@ -164,3 +159,7 @@ class KimiBackend:
 
     def scrub_env(self, env: dict[str, str], config_mode: str | None) -> dict[str, str]:  # noqa: ARG002 — protocol signature; kimi has no config modes
         return env
+
+
+# The adapter is stateless; every production path shares this instance.
+BACKEND = KimiBackend()

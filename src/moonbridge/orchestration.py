@@ -408,6 +408,7 @@ async def run_consult(
     prompt = prompts.build_consult_prompt(question, extra_context or "")
     outcome = await runspace.run_isolated(
         prompt,
+        kind="consult",
         cwd=cwd,
         meta=meta,
         sandbox=sandbox,
@@ -538,6 +539,7 @@ async def run_review(
     # a review cannot modify what it is reviewing.
     outcome = await runspace.run_isolated(
         prompt,
+        kind="review_changes",
         cwd=cwd,
         meta=meta,
         sandbox=sandbox,

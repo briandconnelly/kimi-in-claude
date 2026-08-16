@@ -88,6 +88,7 @@ async def run_delegate(
     context; the diffstat still reflects the full diff."""
     outcome = await runspace.run_isolated(
         prompts.build_delegate_prompt(task),
+        kind="delegate",
         cwd=cwd,
         meta=meta,
         sandbox=sandbox,

@@ -459,3 +459,39 @@ def test_kimi_version_returns_none_when_absent(monkeypatch):
         lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
     )
     assert kimi.kimi_version() is None
+
+
+async def test_run_kimi_exec_surfaces_help_gate_drops_from_the_adapter(monkeypatch, tmp_path):
+    """The dropped-flags channel rides PreparedRun.dropped_flags since the re-plumb.
+    A wiring bug (e.g. always-empty) would silently kill compat warnings and
+    model-provenance reconciliation, so a real gated drop is pinned end to end."""
+    from pontifex.core.runtime import CommandRun
+
+    from moonbridge import preflight
+
+    async def fake_run_async(
+        cmd,
+        *,
+        cwd,
+        timeout_seconds,
+        stdin_text=None,
+        env=None,
+        on_stdout_line=None,
+        max_output_bytes=None,
+        orphan_marker=None,
+    ):
+        assert cli_contract.MODEL_FLAG not in cmd  # the gate really dropped it from argv
+        return CommandRun("", "", 0, 1, False)
+
+    monkeypatch.setattr(kimi.runtime, "run_async", fake_run_async)
+    monkeypatch.setattr(preflight, "flag_support", lambda force=False: NO_FLAGS)
+    result = await kimi.run_kimi_exec(
+        "q",
+        kind="consult",
+        cwd=str(tmp_path),
+        sandbox=cli_contract.SANDBOX_READ_ONLY,
+        isolation="inherit",
+        timeout_seconds=10,
+        model="acme/model-one",
+    )
+    assert result.dropped_flags == [cli_contract.MODEL_FLAG]
