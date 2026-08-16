@@ -9,9 +9,23 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from pontifex.core import redaction, worktree
+from pontifex.core.jobs import JobStore
+
 from moonbridge import cli_contract
-from moonbridge._core import redaction, worktree
-from moonbridge._core.jobs import JobStore
+
+# This bridge's pinned worktree knobs. The values predate the pontifex extraction
+# and are externally visible (temp-dir names a job runner constrains cleanup to;
+# baseline-commit authorship in delegate worktree history; the handshake-dir
+# exclusion keeping this server's own plumbing out of reviewed diffs), so they
+# must never drift. The exclusion literal is duplicated from
+# cli_contract.HANDSHAKE_DIR_NAME; tests assert the two stay in step.
+WORKTREE_CONFIG = worktree.WorktreeConfig(
+    prefix="moonbridge-worktree-",
+    identity_name="moonbridge",
+    identity_email="moonbridge@local",
+    extra_excludes=(":(exclude,glob)**/.moonbridge/**",),
+)
 
 ENV_PREFIX = "MOONBRIDGE_"
 
@@ -306,7 +320,7 @@ def job_store() -> JobStore:
         max_seconds=job_max_seconds(),
         max_count=job_max_count(),
         cleanup_root=Path(tempfile.gettempdir()),
-        cleanup_prefix=worktree.WORKTREE_PREFIX,
+        cleanup_prefix=WORKTREE_CONFIG.prefix,
     )
 
 

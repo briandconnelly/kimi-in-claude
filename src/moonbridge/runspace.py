@@ -20,8 +20,9 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from moonbridge import kimi, normalize
-from moonbridge._core import worktree
+from pontifex.core import worktree
+
+from moonbridge import config, kimi, normalize
 from moonbridge.errors import make_error, serialize_error
 from moonbridge.schemas import ErrorDetail, ErrorResult, Meta, Usage
 
@@ -123,7 +124,7 @@ async def run_isolated(
 
     if allow_non_repo and not worktree.is_git_repo(cwd, timeout=git_timeout):
         meta.security_warnings = [*meta.security_warnings, NO_REPO_WARNING]
-        with tempfile.TemporaryDirectory(prefix=worktree.WORKTREE_PREFIX) as tmp:
+        with tempfile.TemporaryDirectory(prefix=config.WORKTREE_CONFIG.prefix) as tmp:
             result = await _invoke(
                 prompt,
                 run_dir=tmp,
@@ -139,7 +140,12 @@ async def run_isolated(
             return _finish(result, meta, diff="", aliases=())
 
     try:
-        wt = worktree.create(cwd, timeout=git_timeout, on_parent=on_worktree_parent)
+        wt = worktree.create(
+            cwd,
+            timeout=git_timeout,
+            on_parent=on_worktree_parent,
+            config=config.WORKTREE_CONFIG,
+        )
     except (worktree.NotAGitRepoError, worktree.NoCommitsError, worktree.WorktreeError) as exc:
         return RunOutcome(error=_worktree_error_envelope(exc, meta))
 
@@ -166,7 +172,9 @@ async def run_isolated(
         )
         failed = result.run.exit_code != 0 or result.run.binary_missing or result.run.timed_out
         if not failed and capture_diff:
-            diff = worktree.capture_diff(wt.path, timeout=git_timeout)
+            diff = worktree.capture_diff(
+                wt.path, timeout=git_timeout, config=config.WORKTREE_CONFIG
+            )
     except worktree.WorktreeError as exc:
         return RunOutcome(
             error=serialize_error(

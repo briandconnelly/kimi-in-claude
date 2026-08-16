@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 
+from pontifex.core.runtime import CommandRun
+
 from moonbridge import cli_contract, kimi
-from moonbridge._core.runtime import CommandRun
 from moonbridge.schemas import Meta
 
 # events string containing a token_count event with a rate_limits block
@@ -91,9 +92,9 @@ def test_run_delegate_forwards_on_event(monkeypatch):
     from types import SimpleNamespace
 
     import anyio
+    from pontifex.core import worktree
 
     from moonbridge import delegate, runspace
-    from moonbridge._core import worktree
 
     captured: dict = {}
 
@@ -135,8 +136,9 @@ def test_run_delegate_forwards_on_event(monkeypatch):
 
 async def test_run_delegate_not_a_git_repo(tmp_path, monkeypatch):
     """not_a_git_repo error uses new envelope shape with symbolic next_step."""
+    from pontifex.core import worktree
+
     from moonbridge import delegate
-    from moonbridge._core import worktree
     from moonbridge.schemas import Meta
 
     meta = Meta(
@@ -176,9 +178,9 @@ def test_run_delegate_forwards_reasoning_effort(monkeypatch):
     from types import SimpleNamespace
 
     import anyio
+    from pontifex.core import worktree
 
     from moonbridge import delegate, runspace
-    from moonbridge._core import worktree
 
     captured: dict = {}
 
@@ -223,9 +225,9 @@ def test_run_delegate_reports_a_flag_rejection_as_contract_drift(monkeypatch):
     from types import SimpleNamespace
 
     import anyio
+    from pontifex.core import worktree
 
     from moonbridge import delegate, runspace
-    from moonbridge._core import worktree
 
     rejection = "error: unknown option '--output-format'"
 
@@ -264,9 +266,9 @@ def _run_delegate_with_message(monkeypatch, message: str, *, wt_path: str, diff:
     from types import SimpleNamespace
 
     import anyio
+    from pontifex.core import worktree
 
     from moonbridge import delegate, runspace
-    from moonbridge._core import worktree
 
     removed: list = []
 
@@ -379,9 +381,9 @@ def _run_delegate_with_failure(monkeypatch, stderr: str, *, wt_path: str, exit_c
     from types import SimpleNamespace
 
     import anyio
+    from pontifex.core import worktree
 
     from moonbridge import delegate, runspace
-    from moonbridge._core import worktree
 
     async def fake_exec(prompt, **kwargs):
         return kimi.KimiRunResult(

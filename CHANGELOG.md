@@ -5,6 +5,18 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- Generic core machinery (`jobs`, `worktree`, `gitdiff`, `redaction`, `runtime`,
+  `gitproc`, `streamcap`, `idempotency`, `workspace`, `jsoncache`) now comes from
+  the shared [pontifex](https://github.com/briandconnelly/pontifex) library —
+  this repo's `_core/` was its extraction source of record, so the code is the
+  same (the redaction newline fix, worktree hardening, and orphan sweep all
+  originated here). This bridge's worktree knobs (`moonbridge-worktree-` prefix,
+  `moonbridge@local` baseline identity, the `.moonbridge` handshake-dir diff
+  exclusion) are pinned in `config.WORKTREE_CONFIG`, so externally visible
+  behavior is unchanged; all wire snapshots are byte-identical.
+
 ### Removed
 
 - **Breaking:** the `transfer_unsupported`, `transfer_failed`, and `transfer_incomplete` error

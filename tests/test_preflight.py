@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from pontifex.core.runtime import CommandRun
+
 from moonbridge import cli_contract, preflight
-from moonbridge._core.runtime import CommandRun
 
 _HELP = """Usage: kimi [options] [command]
 

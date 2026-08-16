@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 
+from pontifex.core import runtime
+
 from moonbridge import cli_contract
-from moonbridge._core import runtime
 from moonbridge.schemas import ModelCatalogResult, ModelInfo
 
 _ADVISORY = (
