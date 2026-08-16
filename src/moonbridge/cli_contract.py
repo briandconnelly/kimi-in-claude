@@ -404,6 +404,9 @@ PONTIFEX_CONTRACT = _pontifex_contract.BackendContract(
     # KIMI_MODEL_THINKING_EFFORT (exits 0, answers at the model's default), so
     # pre-spend local validation is the only protection.
     effort_silently_ignored_upstream=True,
+    # Universal token floor (low|medium|high|max) + catalog-relative refinement,
+    # failing OPEN when the catalog cannot answer (see kimi_models).
+    effort_validation="token_floor_plus_catalog",
     usage_event_markers=USAGE_EVENT_MARKERS,
     extra_args=_pontifex_contract.ExtraArgsPolicy(),  # empty = refuse loudly (see config)
     failure_signatures=_pontifex_contract.FailureSignatures(
