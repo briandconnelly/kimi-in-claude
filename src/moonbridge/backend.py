@@ -37,8 +37,8 @@ CONTRACT = PONTONIER_CONTRACT
 
 
 def schema_instruction(output_schema: dict) -> str:
-    """The prompt-appended structured-output instruction, byte-identical to the
-    inline text in `kimi.run_kimi_exec` (a parity test pins the two)."""
+    """The prompt-appended structured-output instruction — the only copy of this
+    wording. `kimi.run_kimi_exec` reaches it through `prepare()`."""
     return (
         "\n\n# Required output format\n"
         "Reply with a single JSON object and nothing else — no prose, no code fence. "
