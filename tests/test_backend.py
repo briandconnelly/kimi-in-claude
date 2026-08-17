@@ -140,6 +140,26 @@ def test_validate_request_rejects_non_kimi_effort_token():
     assert rejected.code == "invalid_reasoning_effort"
 
 
+@pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high", "xhigh", "max"])
+def test_validate_request_admits_every_documented_effort(effort, monkeypatch):
+    """reasoning_effort is documented as an OPEN per-model string (param_contracts:
+    "commonly minimal|low|medium|high|xhigh"), so no local closed vocabulary may
+    refuse one. Regression: an earlier floor `fullmatch`ed a pattern built for
+    SCANNING kimi's rejection prose (`\\b(low|medium|high|max)\\b`, still used that
+    way at kimi_models:44) and so refused `minimal` and `xhigh` pre-spend — values
+    this server advertises. The catalog is the only authority, and it fails open."""
+    monkeypatch.setattr(kimi_models, "supported_efforts_for", lambda model, catalog=None: None)
+    request = RunRequest(
+        kind="consult",
+        prompt="q",
+        cwd=".",
+        timeout_seconds=10,
+        model="mystery",
+        reasoning_effort=effort,
+    )
+    assert BACKEND.validate_request(request) is None
+
+
 def test_validate_request_consults_the_catalog(monkeypatch):
     monkeypatch.setattr(kimi_models, "supported_efforts_for", lambda model, catalog=None: ["low"])
     bad = RunRequest(

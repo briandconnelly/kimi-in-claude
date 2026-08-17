@@ -2,12 +2,27 @@
 
 A faithful thin layer over the proven functions in `kimi.py` — handshake
 staging, command construction, extraction, and classification delegate to the
-same code they always ran. Since the freeze-window re-plumb, this adapter IS
-the hot path: `kimi.run_kimi_exec` stages every model-bearing run through
-`prepare()`, so the adapter can no longer drift from production behavior — it
-is production behavior. That re-plumb also DISSOLVED the schema-instruction
-duplication this module used to pin with a parity test: the prompt-append
-wording now lives only in `schema_instruction` below.
+same code they always ran.
+
+WHAT IS WIRED, precisely — the distinction matters before you trust anything
+here as a description of production:
+
+- `prepare()` IS the hot path. Since the freeze-window re-plumb,
+  `kimi.run_kimi_exec` stages every model-bearing run through it, so it cannot
+  drift from production behavior — it is production behavior. That re-plumb also
+  DISSOLVED the schema-instruction duplication this module used to pin with a
+  parity test: the prompt-append wording now lives only in `schema_instruction`.
+- `validate_request`, `finalize`, `classify_failure`, `list_models` and
+  `auth_probe` have NO production callers yet. Production reaches the same
+  behavior by other routes: `server._reasoning_effort_unsupported_error` runs
+  the pre-spend effort guard, and `orchestration`/`runspace` call
+  `kimi.classify_failure` directly. These methods are held to the pontonier
+  conformance suite, not to differential parity with those routes, so they can
+  drift from them. Two known gaps are noted at their definitions.
+
+`PONTONIER_CONTRACT.effort_validation` therefore describes THIS ADAPTER's
+`validate_request`, not the server guard that actually runs today; the two agree
+on the catalog layer and its fail-open stance, and differ on the floor.
 
 Protocol-fit history: the catalog-relative effort-validation finding landed as
 `BackendContract.effort_validation` (pontonier 0.3.0); the named-artifact and
@@ -52,14 +67,20 @@ class KimiBackend:
 
     def validate_request(self, request: RunRequest) -> ClassifiedFailure | None:
         # Verified on 0.35.0: kimi silently ignores an unrecognized effort (exit 0,
-        # default-effort answer), so this pre-spend check is the ONLY protection.
-        # Two layers: the universal token floor (a value matching no kimi effort
-        # vocabulary is always wrong), then the catalog-relative check when the
-        # alias's supported set is known.
+        # default-effort answer), so pre-spend validation is the ONLY protection — and
+        # pontonier's conformance check makes it mandatory while
+        # `effort_silently_ignored_upstream` is set. Two layers: the vocabulary floor
+        # (a value matching no kimi effort level at all is always wrong), then the
+        # catalog-relative check, which fails OPEN when the alias is unknown.
+        #
+        # The floor deliberately reads REASONING_EFFORT_VOCABULARY, not the
+        # similarly-named REASONING_EFFORT_TOKEN_PATTERN: that pattern exists to scan
+        # kimi's rejection prose and omits `minimal`/`xhigh`, so `fullmatch`ing it here
+        # refused two efforts param_contracts advertises to agents.
         effort = request.reasoning_effort
         if effort is None:
             return None
-        if not cli_contract.REASONING_EFFORT_TOKEN_PATTERN.fullmatch(effort):
+        if effort.strip().lower() not in cli_contract.REASONING_EFFORT_VOCABULARY:
             return ClassifiedFailure(
                 code="invalid_reasoning_effort",
                 detail="the requested reasoning_effort matches no kimi effort level.",
@@ -125,6 +146,13 @@ class KimiBackend:
         )
         usage, session_id = normalize.parse_event_metadata(outcome.run.stdout)
         structured = normalize.parse_structured(answer) if request.schema is not None else None
+        # LOSSY, and unreachable today (nothing in src/ calls finalize — see the module
+        # docstring). pontonier's `Usage` has no `cached_input_tokens`, but moonbridge's
+        # own `schemas.Usage` does and `normalize.parse_event_metadata` populates it, so
+        # the production path reports a field this mapping drops. Wiring `finalize`
+        # without first carrying that field across would silently zero it out of every
+        # envelope. Widen `pontonier.backend.protocol.Usage` (or thread the moonbridge
+        # Usage through) before making this the hot path.
         return ExecResult(
             answer=answer or "",
             structured=structured,
@@ -139,6 +167,14 @@ class KimiBackend:
         )
 
     def classify_failure(self, outcome: RunOutcome, request: RunRequest) -> ClassifiedFailure:
+        # Unreachable today: production calls `kimi.classify_failure` directly from
+        # `runspace._finish` and `orchestration`. Those callers pass two arguments this
+        # one cannot, and both must be solved before this becomes the hot path:
+        #   - `sanitize=` — runspace hands in `worktree.sanitize_prose`, which relativizes
+        #     AND redacts worktree paths in one pass. Without it an isolated run's error
+        #     prose can name a torn-down absolute worktree path. The protocol gives no
+        #     channel for the alias tuple that sanitizer closes over.
+        #   - `last_message` — improves classification; only `events` is available here.
         info = kimi.classify_failure(
             outcome.run,
             events=outcome.run.stdout,

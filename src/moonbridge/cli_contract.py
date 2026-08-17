@@ -318,6 +318,17 @@ _RETRY_AFTER_PATTERNS = (
 REASONING_EFFORT_REJECTION_MARKERS = ("support_efforts", "thinking.effort", "effort")
 REASONING_EFFORT_TOKEN_PATTERN = re.compile(r"\b(low|medium|high|max)\b", re.I)
 
+# The pre-spend effort FLOOR: every level any kimi model is known to advertise.
+# Deliberately a SUPERSET — the per-model catalog refines it, and this only has to
+# catch values that match no kimi vocabulary at all (the run would otherwise exit 0
+# at the default effort while the envelope claimed the requested one).
+#
+# NOT the same thing as REASONING_EFFORT_TOKEN_PATTERN above, and not interchangeable
+# with it: that pattern SCANS kimi's rejection prose for a mentioned level (substring
+# semantics, used with `.match()` at kimi_models:44) and omits `minimal`/`xhigh`.
+# Gating input on it refuses efforts this server advertises in param_contracts.
+REASONING_EFFORT_VOCABULARY = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
+
 
 def _any(patterns: tuple[re.Pattern[str], ...], texts: tuple[str | None, ...]) -> bool:
     blob = "\n".join(t for t in texts if t)
