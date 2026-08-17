@@ -1,4 +1,4 @@
-"""KimiBackend: real-adapter validation of the provisional pontonier protocol.
+"""KimiBackend: real-adapter validation of the frozen pontonier protocol.
 
 The load-bearing test is the argv differential: the adapter's PreparedRun must
 build the SAME command `kimi.run_kimi_exec` builds (normalized for the per-run

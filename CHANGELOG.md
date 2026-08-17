@@ -32,11 +32,11 @@ All notable changes to this project are documented here, following
   `BackendContract` shape, derivation-pinned against the legacy constants
   (including the verified silent-effort-ignore fact and field-scoped catalog
   authority: aliases authoritative, effort metadata advisory).
-- `backend.KimiBackend` — this bridge's adapter on the provisional pontonier
-  `AgentBackend` protocol, with an argv-differential test against the
-  production command builder and a fail-open catalog-relative effort guard
-  matching the server's stance. Runspace re-plumbing lands with the protocol
-  freeze.
+- `backend.KimiBackend` — this bridge's adapter on the frozen pontonier
+  `AgentBackend` protocol (`contract_api_version = 1`), with an argv-differential
+  test against the production command builder and a fail-open catalog-relative
+  effort guard matching the server's stance. Every model-bearing run is staged
+  through it, so it cannot drift from production behavior.
 - The surface-honesty phrase scan now runs through `pontonier.testing`; the
   moonbridge-specific quota/transfer/repair-hint honesty checks are unchanged.
 

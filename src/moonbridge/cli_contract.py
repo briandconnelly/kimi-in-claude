@@ -375,9 +375,9 @@ def parse_retry_after_ms(*texts: str | None) -> int | None:
 # The declarative half of this contract, in the shared shape the pontonier
 # conformance/honesty kits consume. Values are DERIVED from the constants above —
 # tests/test_surface_honesty.py pins the derivations so the two can never drift.
-# Behavior (handshake staging, classification) still lives in kimi.py; migrating it
-# onto the pontonier AgentBackend lifecycle is the planned next step while the
-# protocol is provisional.
+# Behavior (handshake staging, classification) lives in kimi.py and is reached
+# through `backend.KimiBackend` on the pontonier AgentBackend lifecycle, frozen at
+# contract_api_version = 1.
 PONTONIER_CONTRACT = _pontonier_contract.BackendContract(
     backend_id="kimi",
     display_name="Kimi",
