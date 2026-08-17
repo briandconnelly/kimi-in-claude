@@ -6,12 +6,12 @@ Conventions for any agent (or human) working in this repository.
 
 A Claude Code and Codex plugin that calls the Kimi Code CLI via an MCP server. The Python package
 is `moonbridge` under `src/`. Generic, CLI-agnostic machinery lives in the shared
-[`pontifex`](https://github.com/briandconnelly/pontifex) library (`pontifex.core`), which this
+[`pontonier`](https://github.com/briandconnelly/pontonier) library (`pontonier.core`), which this
 package consumes as a dependency — the extraction this section used to plan happened.
 
 - **Rule:** this bridge pins its externally visible core knobs explicitly
   (`config.WORKTREE_CONFIG`: worktree prefix, baseline-commit identity, and the handshake-dir
-  diff exclusion) rather than inheriting pontifex defaults; changing them is a behavior change,
+  diff exclusion) rather than inheriting pontonier defaults; changing them is a behavior change,
   not a refactor.
 
 ## Tooling

@@ -27,8 +27,8 @@ from pathlib import Path
 from stat import S_ISREG
 from typing import TYPE_CHECKING
 
-from pontifex.backend.protocol import RunRequest
-from pontifex.core import redaction, runtime
+from pontonier.backend.protocol import RunRequest
+from pontonier.core import redaction, runtime
 
 from moonbridge import cli_contract, config, normalize, preflight
 from moonbridge.errors import make_error
@@ -37,7 +37,7 @@ from moonbridge.schemas import ErrorDetail
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pontifex.core.runtime import CommandRun
+    from pontonier.core.runtime import CommandRun
 
     from moonbridge.preflight import FlagSupport
     from moonbridge.schemas import ErrorInfo, Meta

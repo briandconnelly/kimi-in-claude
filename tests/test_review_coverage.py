@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
-from pontifex.core.gitdiff import DiffResult, DiffSummary
+from pontonier.core.gitdiff import DiffResult, DiffSummary
 from pydantic import ValidationError
 
 from moonbridge import orchestration as o

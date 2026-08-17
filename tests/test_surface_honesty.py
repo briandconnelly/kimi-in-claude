@@ -17,7 +17,7 @@ import json
 import re
 
 import pytest
-from pontifex.testing import conformance, surface_honesty
+from pontonier.testing import conformance, surface_honesty
 
 from moonbridge import cli_contract, errors, manifest, schemas
 
@@ -49,14 +49,14 @@ def test_wire_prose_does_not_contradict_the_cli_contract(wire_text: str, phrase:
     )
 
 
-def test_contract_passes_pontifex_conformance():
-    assert conformance.check_contract(cli_contract.PONTIFEX_CONTRACT) == []
+def test_contract_passes_pontonier_conformance():
+    assert conformance.check_contract(cli_contract.PONTONIER_CONTRACT) == []
 
 
 def test_contract_instance_derives_from_legacy_constants():
-    """The declarative PONTIFEX_CONTRACT and the constants kimi.py still consumes
+    """The declarative PONTONIER_CONTRACT and the constants kimi.py still consumes
     are the same facts in two shapes; pin the derivation so they cannot drift."""
-    c = cli_contract.PONTIFEX_CONTRACT
+    c = cli_contract.PONTONIER_CONTRACT
     assert c.bin_name == cli_contract.KIMI_BIN
     assert c.always_send_flags == cli_contract.ALWAYS_SEND_FLAGS
     assert set(c.help_gated_flags) == set(cli_contract.HELP_GATED_FLAGS)
@@ -82,7 +82,7 @@ def test_signature_regexes_match_what_the_predicates_match():
         "invalid_model": 'Model "zap" is not configured in config.toml.',
         "rate_limited": "429 Too Many Requests",
     }
-    sigs = cli_contract.PONTIFEX_CONTRACT.failure_signatures
+    sigs = cli_contract.PONTONIER_CONTRACT.failure_signatures
     assert cli_contract.is_auth_failure(samples["auth"])
     assert any(re.search(p, samples["auth"]) for p in sigs.auth)
     assert cli_contract.is_contract_drift(samples["contract_drift"])

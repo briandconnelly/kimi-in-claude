@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pontifex.core import worktree
+from pontonier.core import worktree
 
 from moonbridge import config, kimi, normalize
 from moonbridge.errors import make_error, serialize_error

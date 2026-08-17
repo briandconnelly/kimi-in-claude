@@ -18,8 +18,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from pontifex.core import worktree
-from pontifex.core.runtime import CommandRun
+from pontonier.core import worktree
+from pontonier.core.runtime import CommandRun
 
 from moonbridge import cli_contract, config, kimi, runspace
 from moonbridge.schemas import Meta
@@ -79,7 +79,7 @@ def fake_kimi(monkeypatch):
         )
         return CommandRun(stdout, "", 0, 12, False)
 
-    monkeypatch.setattr("pontifex.core.runtime.run_async", _fake_run_async)
+    monkeypatch.setattr("pontonier.core.runtime.run_async", _fake_run_async)
     return calls
 
 
@@ -167,7 +167,7 @@ async def test_handshake_dir_never_reaches_a_captured_diff(tmp_path, monkeypatch
         )
         return CommandRun('{"role":"assistant","content":"done"}\n', "", 0, 5, False)
 
-    monkeypatch.setattr("pontifex.core.runtime.run_async", _writing_run)
+    monkeypatch.setattr("pontonier.core.runtime.run_async", _writing_run)
     repo = _repo(tmp_path)
     outcome = await runspace.run_isolated(
         "add mul",
@@ -244,7 +244,7 @@ def test_read_only_agent_document_grants_no_write_or_shell():
 
 
 def test_handshake_dir_name_matches_the_worktree_exclude():
-    """pontifex.core cannot know this bridge's handshake dir, so the exclusion lives in
+    """pontonier.core cannot know this bridge's handshake dir, so the exclusion lives in
     config.WORKTREE_CONFIG.extra_excludes with the name written out literally. If it drifts
     from cli_contract.HANDSHAKE_DIR_NAME, the prompt and answer files silently start
     appearing in every delegate diff."""

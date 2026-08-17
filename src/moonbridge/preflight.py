@@ -16,7 +16,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from pontifex.core import runtime
+from pontonier.core import runtime
 
 from moonbridge import cli_contract
 

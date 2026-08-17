@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast, get_args
 
-from pontifex.core import gitdiff, redaction
+from pontonier.core import gitdiff, redaction
 
 from moonbridge import config, kimi, normalize, prompts, runspace
 from moonbridge.errors import make_error, serialize_error
@@ -39,7 +39,7 @@ from moonbridge.schemas import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pontifex.core.gitdiff import DiffResult
+    from pontonier.core.gitdiff import DiffResult
 
 
 def build_coverage(*, scope: str, diff: DiffResult) -> Coverage:

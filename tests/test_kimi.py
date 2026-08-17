@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from pontifex.core.runtime import CommandRun
+from pontonier.core.runtime import CommandRun
 
 from moonbridge import cli_contract, kimi
 from moonbridge.preflight import FlagSupport
@@ -326,7 +326,7 @@ def _run(stdout="", stderr="", exit_code=1, timed_out=False):
 
 
 def test_missing_binary():
-    from pontifex.core.runtime import BINARY_NOT_FOUND
+    from pontonier.core.runtime import BINARY_NOT_FOUND
 
     err = kimi.classify_failure(_run(stderr=BINARY_NOT_FOUND, exit_code=127))
     assert err.code == "kimi_not_found"
@@ -432,7 +432,7 @@ def test_login_status_detail_never_echoes_provider_details(monkeypatch):
         }
     )
     monkeypatch.setattr(
-        "pontifex.core.runtime.run_sync_capture",
+        "pontonier.core.runtime.run_sync_capture",
         lambda *a, **k: CommandRun(payload, "", 0, 5, False),
     )
     configured, detail = kimi.login_status()
@@ -442,20 +442,20 @@ def test_login_status_detail_never_echoes_provider_details(monkeypatch):
 
 
 def test_login_status_is_indeterminate_when_the_probe_cannot_run(monkeypatch):
-    from pontifex.core.runtime import BINARY_NOT_FOUND
+    from pontonier.core.runtime import BINARY_NOT_FOUND
 
     monkeypatch.setattr(
-        "pontifex.core.runtime.run_sync_capture",
+        "pontonier.core.runtime.run_sync_capture",
         lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
     )
     assert kimi.login_status() == (None, None)
 
 
 def test_kimi_version_returns_none_when_absent(monkeypatch):
-    from pontifex.core.runtime import BINARY_NOT_FOUND
+    from pontonier.core.runtime import BINARY_NOT_FOUND
 
     monkeypatch.setattr(
-        "pontifex.core.runtime.run_sync_capture",
+        "pontonier.core.runtime.run_sync_capture",
         lambda *a, **k: CommandRun("", BINARY_NOT_FOUND, 127, 1, False),
     )
     assert kimi.kimi_version() is None
@@ -465,7 +465,7 @@ async def test_run_kimi_exec_surfaces_help_gate_drops_from_the_adapter(monkeypat
     """The dropped-flags channel rides PreparedRun.dropped_flags since the re-plumb.
     A wiring bug (e.g. always-empty) would silently kill compat warnings and
     model-provenance reconciliation, so a real gated drop is pinned end to end."""
-    from pontifex.core.runtime import CommandRun
+    from pontonier.core.runtime import CommandRun
 
     from moonbridge import preflight
 

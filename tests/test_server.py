@@ -11,9 +11,9 @@ from typing import get_args
 
 import pytest
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
-from pontifex.core import worktree as _worktree_mod
-from pontifex.core.jobs import DiscardOutcome
-from pontifex.core.runtime import CommandRun
+from pontonier.core import worktree as _worktree_mod
+from pontonier.core.jobs import DiscardOutcome
+from pontonier.core.runtime import CommandRun
 from pydantic import ValidationError
 
 from moonbridge import (
@@ -1016,7 +1016,7 @@ async def test_consult_placeholder_env(monkeypatch, clean_env, tmp_path):
 
 
 # --- review ------------------------------------------------------------------
-from pontifex.core import gitdiff  # noqa: E402
+from pontonier.core import gitdiff  # noqa: E402
 
 
 def _diff(text="diff --git a/x b/x\n+y", files=1, added=1, removed=0):
@@ -1249,7 +1249,7 @@ async def test_review_bad_isolation(clean_env, tmp_path):
 
 
 # --- delegate (propose tier) -------------------------------------------------
-from pontifex.core import worktree  # noqa: E402
+from pontonier.core import worktree  # noqa: E402
 
 
 def _fake_worktree(tmp_path):
@@ -3429,7 +3429,7 @@ async def test_job_not_found_points_at_list(monkeypatch, clean_env, tmp_path):
 def test_job_poll_interval_has_single_source():
     """The agent-visible JOB_POLL_AFTER_MS is the _core default, so a live job
     record's poll_after_ms and the job_running retry_after_ms can't drift."""
-    from pontifex.core import jobs
+    from pontonier.core import jobs
 
     assert JOB_POLL_AFTER_MS == jobs.DEFAULT_POLL_AFTER_MS
     assert jobs.JobStore.__dataclass_fields__["poll_after_ms"].default == JOB_POLL_AFTER_MS
@@ -3699,7 +3699,7 @@ def test_internal_error_result_omits_empty_exception_detail(clean_env, tmp_path)
 
 def test_spawn_failure_envelope_redacts_secret_in_exception_text(clean_env, tmp_path):
     # F10: the spawn-failure internal_error is a second exception-text sink.
-    from pontifex.core import redaction
+    from pontonier.core import redaction
 
     exc = OSError("cannot exec /home/AKIAIOSFODNN7EXAMPLE/worker")
     res = server._spawn_failure_envelope(exc, _meta_for(tmp_path))
@@ -4062,7 +4062,7 @@ async def test_consume_result_classifies_incompatibility_too(monkeypatch, clean_
 
 
 def _real_store(tmp_path):
-    from pontifex.core.jobs import JobStore
+    from pontonier.core.jobs import JobStore
 
     return JobStore(root=tmp_path / "jobstate", ttl_seconds=3600, max_seconds=60, max_count=50)
 
@@ -4169,7 +4169,7 @@ async def test_consume_failed_delete_still_delivers(monkeypatch, clean_env, tmp_
     # Deletion stays best-effort (as the pre-split rmtree was): when removal fails
     # but the payload validated, deliver it and leave the record to the TTL reaper
     # rather than reporting an error about a result we hold in hand.
-    from pontifex.core.jobs import JobStore
+    from pontonier.core.jobs import JobStore
 
     store = _real_store(tmp_path)
     cwd = str(tmp_path)

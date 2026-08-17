@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from pontifex.core.runtime import BINARY_NOT_FOUND, CommandRun
+from pontonier.core.runtime import BINARY_NOT_FOUND, CommandRun
 
 from moonbridge import kimi_models
 
@@ -56,7 +56,7 @@ def probe(monkeypatch):
             5,
             timed_out,
         )
-        monkeypatch.setattr("pontifex.core.runtime.run_sync_capture", lambda *a, **k: run)
+        monkeypatch.setattr("pontonier.core.runtime.run_sync_capture", lambda *a, **k: run)
 
     return _set
 

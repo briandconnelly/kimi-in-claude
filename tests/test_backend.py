@@ -1,4 +1,4 @@
-"""KimiBackend: real-adapter validation of the provisional pontifex protocol.
+"""KimiBackend: real-adapter validation of the provisional pontonier protocol.
 
 The load-bearing test is the argv differential: the adapter's PreparedRun must
 build the SAME command `kimi.run_kimi_exec` builds (normalized for the per-run
@@ -11,13 +11,13 @@ from __future__ import annotations
 import re
 
 import pytest
-from pontifex.backend.protocol import AgentBackend, RunOutcome, RunRequest
-from pontifex.core.runtime import CommandRun
-from pontifex.testing import conformance
+from pontonier.backend.protocol import AgentBackend, RunOutcome, RunRequest
+from pontonier.core.runtime import CommandRun
+from pontonier.testing import conformance
 
 from moonbridge import backend as backend_mod
 from moonbridge import cli_contract, kimi, kimi_models
-from moonbridge.cli_contract import PONTIFEX_CONTRACT
+from moonbridge.cli_contract import PONTONIER_CONTRACT
 from moonbridge.preflight import FlagSupport
 
 BACKEND = backend_mod.KimiBackend()
@@ -40,9 +40,9 @@ def test_backend_is_structurally_conformant():
     assert isinstance(BACKEND, AgentBackend)
 
 
-def test_backend_passes_pontifex_conformance(clean_env):
-    assert conformance.check_contract(PONTIFEX_CONTRACT) == []
-    assert conformance.check_backend(PONTIFEX_CONTRACT, BACKEND) == []
+def test_backend_passes_pontonier_conformance(clean_env):
+    assert conformance.check_contract(PONTONIER_CONTRACT) == []
+    assert conformance.check_backend(PONTONIER_CONTRACT, BACKEND) == []
 
 
 async def test_schema_instruction_reaches_the_staged_prompt_file(tmp_path, clean_env):

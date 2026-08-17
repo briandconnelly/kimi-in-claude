@@ -7,7 +7,7 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
-- Every model-bearing run now goes through the pontifex `AgentBackend`
+- Every model-bearing run now goes through the pontonier `AgentBackend`
   adapter: `kimi.run_kimi_exec` stages via `KimiBackend.prepare()` — the
   out-of-workspace handshake dir, argv pointer, effort environment, the
   prompt-appended schema instruction, and help-gate drops (surfaced on the new
@@ -21,23 +21,23 @@ All notable changes to this project are documented here, following
 ### Fixed
 
 - Multi-line private-key blocks (PEM/PKCS8/OpenSSH/PGP) in gathered diffs and
-  returned prose are now redacted statefully (via pontifex 0.4.0): the
+  returned prose are now redacted statefully (via pontonier 0.4.0): the
   BEGIN/END markers stay visible, every body line between them is dropped, and
   an unterminated block fails closed. Previously only the BEGIN marker was
   masked while the entire base64 body was sent.
 
 ### Added
 
-- `cli_contract.PONTIFEX_CONTRACT` — the declarative CLI contract in the shared
+- `cli_contract.PONTONIER_CONTRACT` — the declarative CLI contract in the shared
   `BackendContract` shape, derivation-pinned against the legacy constants
   (including the verified silent-effort-ignore fact and field-scoped catalog
   authority: aliases authoritative, effort metadata advisory).
-- `backend.KimiBackend` — this bridge's adapter on the provisional pontifex
+- `backend.KimiBackend` — this bridge's adapter on the provisional pontonier
   `AgentBackend` protocol, with an argv-differential test against the
   production command builder and a fail-open catalog-relative effort guard
   matching the server's stance. Runspace re-plumbing lands with the protocol
   freeze.
-- The surface-honesty phrase scan now runs through `pontifex.testing`; the
+- The surface-honesty phrase scan now runs through `pontonier.testing`; the
   moonbridge-specific quota/transfer/repair-hint honesty checks are unchanged.
 
 ### Removed
@@ -56,7 +56,7 @@ All notable changes to this project are documented here, following
 
 - Generic core machinery (`jobs`, `worktree`, `gitdiff`, `redaction`, `runtime`,
   `gitproc`, `streamcap`, `idempotency`, `workspace`, `jsoncache`) now comes from
-  the shared [pontifex](https://github.com/briandconnelly/pontifex) library —
+  the shared [pontonier](https://github.com/briandconnelly/pontonier) library —
   this repo's `_core/` was its extraction source of record, so the code is the
   same (the redaction newline fix, worktree hardening, and orphan sweep all
   originated here). This bridge's worktree knobs (`moonbridge-worktree-` prefix,

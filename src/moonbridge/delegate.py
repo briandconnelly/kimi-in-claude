@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pontifex.core import redaction, worktree
+from pontonier.core import redaction, worktree
 
 from moonbridge import config, prompts, runspace
 from moonbridge.schemas import (

@@ -1,4 +1,4 @@
-"""KimiBackend: this bridge's adapter on the pontifex AgentBackend protocol.
+"""KimiBackend: this bridge's adapter on the pontonier AgentBackend protocol.
 
 A faithful thin layer over the proven functions in `kimi.py` — handshake
 staging, command construction, extraction, and classification delegate to the
@@ -10,7 +10,7 @@ duplication this module used to pin with a parity test: the prompt-append
 wording now lives only in `schema_instruction` below.
 
 Protocol-fit history: the catalog-relative effort-validation finding landed as
-`BackendContract.effort_validation` (pontifex 0.3.0); the named-artifact and
+`BackendContract.effort_validation` (pontonier 0.3.0); the named-artifact and
 dropped-flags channels this hot path needs landed as
 `PreparedRun.artifact_paths`/`.dropped_flags` (0.4.0).
 """
@@ -22,18 +22,18 @@ import json
 import shutil
 from typing import TYPE_CHECKING
 
-from pontifex.backend.protocol import ClassifiedFailure, ExecResult, PreparedRun, Usage
-from pontifex.core import runtime
+from pontonier.backend.protocol import ClassifiedFailure, ExecResult, PreparedRun, Usage
+from pontonier.core import runtime
 
 from moonbridge import cli_contract, config, kimi, kimi_models, normalize
-from moonbridge.cli_contract import PONTIFEX_CONTRACT
+from moonbridge.cli_contract import PONTONIER_CONTRACT
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pontifex.backend.protocol import RunOutcome, RunRequest
+    from pontonier.backend.protocol import RunOutcome, RunRequest
 
-CONTRACT = PONTIFEX_CONTRACT
+CONTRACT = PONTONIER_CONTRACT
 
 
 def schema_instruction(output_schema: dict) -> str:
@@ -48,7 +48,7 @@ def schema_instruction(output_schema: dict) -> str:
 
 
 class KimiBackend:
-    """The behavior half of the Kimi contract (facts live on PONTIFEX_CONTRACT)."""
+    """The behavior half of the Kimi contract (facts live on PONTONIER_CONTRACT)."""
 
     def validate_request(self, request: RunRequest) -> ClassifiedFailure | None:
         # Verified on 0.35.0: kimi silently ignores an unrecognized effort (exit 0,

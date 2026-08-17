@@ -6,8 +6,8 @@ import os
 import subprocess
 
 import pytest
-from pontifex.core import gitdiff
-from pontifex.core.runtime import CommandRun
+from pontonier.core import gitdiff
+from pontonier.core.runtime import CommandRun
 
 from moonbridge import preflight
 
@@ -131,7 +131,7 @@ def _no_real_kimi(request, monkeypatch):
     if request.node.get_closest_marker("integration"):
         return
 
-    from pontifex.core import runtime
+    from pontonier.core import runtime
 
     from moonbridge import cli_contract
 

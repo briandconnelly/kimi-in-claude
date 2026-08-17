@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pontifex.core.runtime import CommandRun
+from pontonier.core.runtime import CommandRun
 
 from moonbridge import cli_contract, preflight
 

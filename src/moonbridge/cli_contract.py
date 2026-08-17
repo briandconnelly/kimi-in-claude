@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import re
 
-from pontifex.backend import contract as _pontifex_contract
+from pontonier.backend import contract as _pontonier_contract
 
 KIMI_BIN = "kimi"
 
@@ -371,14 +371,14 @@ def parse_retry_after_ms(*texts: str | None) -> int | None:
     return None
 
 
-# --- Shared-library contract (pontifex) -------------------------------------------
-# The declarative half of this contract, in the shared shape the pontifex
+# --- Shared-library contract (pontonier) -------------------------------------------
+# The declarative half of this contract, in the shared shape the pontonier
 # conformance/honesty kits consume. Values are DERIVED from the constants above —
 # tests/test_surface_honesty.py pins the derivations so the two can never drift.
 # Behavior (handshake staging, classification) still lives in kimi.py; migrating it
-# onto the pontifex AgentBackend lifecycle is the planned next step while the
+# onto the pontonier AgentBackend lifecycle is the planned next step while the
 # protocol is provisional.
-PONTIFEX_CONTRACT = _pontifex_contract.BackendContract(
+PONTONIER_CONTRACT = _pontonier_contract.BackendContract(
     backend_id="kimi",
     display_name="Kimi",
     bin_name=KIMI_BIN,
@@ -391,14 +391,14 @@ PONTIFEX_CONTRACT = _pontifex_contract.BackendContract(
     readonly_honesty_statement=READ_ONLY_CONFIDENTIALITY_LIMIT,
     implicit_context_disclosure=SKILLS_DISCOVERY_FACT_FULL,
     structured_output="prompt_append",
-    model_catalog=_pontifex_contract.ModelCatalog(
+    model_catalog=_pontonier_contract.ModelCatalog(
         strategy="live_probe",
         # kimi rejects an unknown alias outright (invalid_model), but only ADVISES
         # on whether a given effort is honoured — see kimi_models.supported_efforts_for.
         model_identifier_authority="authoritative",
         effort_metadata_authority="advisory",
     ),
-    isolation_policy=_pontifex_contract.IsolationPolicy.WORKTREE_ALL_TIERS,
+    isolation_policy=_pontonier_contract.IsolationPolicy.WORKTREE_ALL_TIERS,
     needs_orphan_sweep=True,
     # Verified on 0.35.0: kimi SILENTLY IGNORES an unrecognized
     # KIMI_MODEL_THINKING_EFFORT (exits 0, answers at the model's default), so
@@ -408,14 +408,14 @@ PONTIFEX_CONTRACT = _pontifex_contract.BackendContract(
     # failing OPEN when the catalog cannot answer (see kimi_models).
     effort_validation="token_floor_plus_catalog",
     usage_event_markers=USAGE_EVENT_MARKERS,
-    extra_args=_pontifex_contract.ExtraArgsPolicy(),  # empty = refuse loudly (see config)
-    failure_signatures=_pontifex_contract.FailureSignatures(
+    extra_args=_pontonier_contract.ExtraArgsPolicy(),  # empty = refuse loudly (see config)
+    failure_signatures=_pontonier_contract.FailureSignatures(
         auth=tuple(f"(?i){p.pattern}" for p in _AUTH_PATTERNS),
         contract_drift=tuple(f"(?i){p.pattern}" for p in _DRIFT_PATTERNS),
         invalid_model=(f"(?i){_INVALID_MODEL_PATTERN.pattern}",),
         rate_limited=tuple(f"(?i){p.pattern}" for p in _RATE_LIMIT_PATTERNS),
     ),
-    limits=_pontifex_contract.Limits(
+    limits=_pontonier_contract.Limits(
         max_argv_prompt_chars=MAX_ARGV_PROMPT_CHARS,
         handshake_dir_name=HANDSHAKE_DIR_NAME,
         answer_file_name=ANSWER_FILE_NAME,
