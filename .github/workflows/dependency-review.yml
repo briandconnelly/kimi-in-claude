@@ -12,10 +12,17 @@ jobs:
   dependency-review:
     name: dependency-review
     runs-on: ubuntu-latest
-    # Dependency review requires GitHub Advanced Security on a PRIVATE repository.
-    # Without it the upload step fails with 'Resource not accessible by
-    # integration', so skip rather than fail a build for a reason unrelated to the
-    # code. This runs automatically once the repo is public.
+    # Two SEPARATE prerequisites, and this guard only covers the first:
+    #   1. Visibility — on a private repo the action needs GitHub Advanced Security,
+    #      so skip rather than fail a build for a reason unrelated to the code.
+    #   2. Dependency graph must be ENABLED. Going public does not enable it, and
+    #      without it the action exits immediately with "Dependency review is not
+    #      supported on this repository" — every run failed that way until it was
+    #      turned on (2026-08-17), because this comment used to claim the job "runs
+    #      automatically once the repo is public". It does not.
+    # Deliberately unguarded: if the graph is turned off again, this SHOULD go red
+    # rather than skip silently. Probe the prerequisite with
+    # `gh api repos/{owner}/{repo}/dependency-graph/sbom` — 404 means disabled.
     if: github.event.repository.private == false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

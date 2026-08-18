@@ -8,6 +8,8 @@ behavior nobody runs.
 
 from __future__ import annotations
 
+import ast
+import pathlib
 import re
 
 import pytest
@@ -267,3 +269,41 @@ def test_finalize_never_invents_usage():
         run=CommandRun(stdout="", stderr="", exit_code=0, elapsed_ms=5, timed_out=False)
     )
     assert BACKEND.finalize(outcome, request).usage is None
+
+
+# --------------------------------------------------------------------------- #
+# The wiring boundary — an executable form of the module docstring's warning
+# --------------------------------------------------------------------------- #
+def test_only_prepare_is_wired_into_production():
+    """Exactly one adapter method may run in production, and it is `prepare()`.
+
+    The others carry documented divergences from the routes production actually uses:
+    `finalize` drops `cached_input_tokens` (pontonier's `Usage` lacks the field), and
+    `classify_failure` cannot pass the `sanitize=` hook `runspace._finish` supplies, so
+    an isolated run's error prose could name a torn-down worktree path. Those warnings
+    live in comments, and comments do not fail CI — this test does.
+
+    If you are here because this test failed, you wired one up. That is allowed, but
+    close the matching gap FIRST, then add the method here with a note saying how.
+    """
+    src_dir = pathlib.Path(__file__).resolve().parent.parent / "src" / "moonbridge"
+    called: dict[str, list[str]] = {}
+    for path in sorted(src_dir.rglob("*.py")):
+        # Label by the path relative to src_dir, not `path.name`: the walk is recursive,
+        # so a subpackage would otherwise report two different files as the same
+        # `helpers.py:12`. Passing it as `filename` also puts it in any SyntaxError,
+        # which reports `<unknown>` by default.
+        rel = path.relative_to(src_dir).as_posix()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=rel)):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "BACKEND"
+            ):
+                called.setdefault(node.attr, []).append(f"{rel}:{node.lineno}")
+
+    # Method names only — pinning call sites would make unrelated edits fail this test.
+    assert set(called) == {"prepare"}, (
+        f"the set of adapter methods reachable from src/ changed: {called}. "
+        "See this test's docstring before widening it."
+    )
