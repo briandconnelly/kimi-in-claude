@@ -5,6 +5,8 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-18
+
 ### Added
 
 - `cli_contract.PONTONIER_CONTRACT` — the declarative CLI contract in the shared
