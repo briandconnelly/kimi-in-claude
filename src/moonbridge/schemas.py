@@ -7,10 +7,10 @@ import math
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
+from pontonier.core.jobs import DEFAULT_POLL_AFTER_MS
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from moonbridge import __version__
-from moonbridge._core.jobs import DEFAULT_POLL_AFTER_MS
 
 # The agent-visible surface the FINGERPRINT covers, as granular machine-readable
 # identifiers. This tuple is the single source of truth: CapabilitiesResult.fingerprint_covers
@@ -1364,42 +1364,6 @@ class ModelCatalogResult(BaseModel):
 ThreadIdSource = Literal["import_notification", "ledger"]
 
 
-class TransferMeta(BaseModel):
-    """Operational detail for a kimi_transfer run (a local file conversion, no model
-    call). Kept separate from the heavyweight `Meta` (tier/sandbox/usage) since a
-    transfer runs no Kimi tier and spends no tokens."""
-
-    model_config = ConfigDict(extra="forbid")
-    kimi_home: str  # validated absolute $KIMI_CODE_HOME the app-server reported (thread's home)
-    # The async import's correlation id, when a fresh import ran; None on a ledger replay.
-    import_id: str | None = None
-    # Where the thread id came from: the completed notification's success `target`
-    # (a fresh import) or the import ledger (a byte-identical re-import Kimi deduped).
-    thread_id_source: ThreadIdSource
-    elapsed_ms: int
-    request_id: str = Field(default_factory=lambda: uuid4().hex)
-
-
-class TransferResult(BaseModel):
-    """kimi_transfer: a Claude Code session handed off to a resumable Kimi thread.
-
-    No model call and no token spend — a local conversion via `kimi app-server`. The
-    thread already exists in `$KIMI_CODE_HOME`; run `resume_command` to continue it. Note:
-    transferring a still-growing (live) session creates a NEW thread each call — Kimi
-    dedups only a byte-identical transcript — so this is not idempotent for an active
-    session."""
-
-    model_config = ConfigDict(extra="forbid")
-    ok: Literal[True] = True
-    tool: Literal["kimi_transfer"] = "kimi_transfer"
-    thread_id: str
-    resume_command: str  # "kimi resume <thread_id>"
-    source_path: str  # realpath of the transferred transcript
-    meta: TransferMeta
-    fingerprint: str = FINGERPRINT
-    server_version: str | None = _server_version_field()
-
-
 class JobStarted(BaseModel):
     """Returned by the *_async tools: a handle to poll, not a result."""
 
@@ -1865,7 +1829,6 @@ STATUS_SCHEMA = published_schema(
 CAPABILITIES_SCHEMA = published_schema(
     CapabilitiesResult, opaque_fields={"tool_details": _OPAQUE_TOOL_DETAILS}
 )
-TRANSFER_SCHEMA = published_schema(TransferResult)
 MODEL_CATALOG_SCHEMA = published_schema(ModelCatalogResult)
 # kimi_delegate_async returns only a job handle (or an error) — the eventual delegate
 # result is fetched separately via kimi_job_result (DELEGATE_RESULT_SCHEMA).

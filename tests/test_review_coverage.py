@@ -12,10 +12,10 @@ import json
 from pathlib import Path
 
 import pytest
+from pontonier.core.gitdiff import DiffResult, DiffSummary
 from pydantic import ValidationError
 
 from moonbridge import orchestration as o
-from moonbridge._core.gitdiff import DiffResult, DiffSummary
 from moonbridge.schemas import Coverage, RedactionSummary, ReviewResult
 
 _FIXTURES = Path(__file__).parent / "fixtures"

@@ -5,12 +5,14 @@ Conventions for any agent (or human) working in this repository.
 ## What this is
 
 A Claude Code and Codex plugin that calls the Kimi Code CLI via an MCP server. The Python package
-is `moonbridge` under `src/`. Generic, CLI-agnostic machinery lives in
-`moonbridge/_core/` and is designed for later extraction into a shared `agent-bridge`
-package.
+is `moonbridge` under `src/`. Generic, CLI-agnostic machinery lives in the shared
+[`pontonier`](https://github.com/briandconnelly/pontonier) library (`pontonier.core`), which this
+package consumes as a dependency — the extraction this section used to plan happened.
 
-- **Rule:** `_core` must never import from its parent package (one-way dependency; this is what
-  keeps it extractable).
+- **Rule:** this bridge pins its externally visible core knobs explicitly
+  (`config.WORKTREE_CONFIG`: worktree prefix, baseline-commit identity, and the handshake-dir
+  diff exclusion) rather than inheriting pontonier defaults; changing them is a behavior change,
+  not a refactor.
 
 ## Tooling
 

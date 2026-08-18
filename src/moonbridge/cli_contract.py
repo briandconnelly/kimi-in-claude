@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import re
 
+from pontonier.backend import contract as _pontonier_contract
+
 KIMI_BIN = "kimi"
 
 # --- Core non-interactive invocation ---------------------------------------------------
@@ -140,7 +142,9 @@ READ_ONLY_CONFIDENTIALITY_LIMIT = (
 FORBIDDEN_SURFACE_PHRASES = ("kimi exec", "read-only sandbox")
 
 # --- The file handshake ----------------------------------------------------------------
-# Written inside the worktree, under a single dot-directory kept out of any captured diff.
+# Written OUTSIDE the workspace (a mkdtemp dir; symlink defense — see kimi.create_handshake_dir).
+# HANDSHAKE_DIR_NAME survives as the worktree diff-exclusion literal
+# (config.WORKTREE_CONFIG.extra_excludes) for defense in depth.
 HANDSHAKE_DIR_NAME = ".moonbridge"
 PROMPT_FILE_NAME = "prompt.md"
 # Only the propose tier can produce this: a read-only agent has no Write tool.
@@ -179,11 +183,6 @@ SANDBOX_READ_ONLY = "read-only"
 SANDBOX_WORKSPACE_WRITE = "workspace-write"
 SANDBOX_DANGER_FULL = "danger-full-access"
 VALID_SANDBOXES = (SANDBOX_READ_ONLY, SANDBOX_WORKSPACE_WRITE, SANDBOX_DANGER_FULL)
-
-# Codex's `--disable remote_plugin` has no kimi equivalent; kept as inert names so callers
-# referencing them keep type-checking while the disclosure prose carries the real story.
-DISABLE_FEATURE_FLAG = ""
-REMOTE_PLUGIN_FEATURE = ""
 
 # --- Versions --------------------------------------------------------------------------
 SUPPORTED_VERSIONS = frozenset({(0, 35)})
@@ -314,10 +313,32 @@ _RETRY_AFTER_PATTERNS = (
     re.compile(r"try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|minutes?)", re.I),
 )
 
-# A rejected reasoning effort. Effort rides an env var, so kimi validates it against the
-# model's `support_efforts`; these markers separate "your effort was bad" from real drift.
-REASONING_EFFORT_REJECTION_MARKERS = ("support_efforts", "thinking.effort", "effort")
-REASONING_EFFORT_TOKEN_PATTERN = re.compile(r"\b(low|medium|high|max)\b", re.I)
+# NOTE: REASONING_EFFORT_REJECTION_MARKERS lived here to separate "your effort was bad"
+# from real contract drift. It was never read: M0-6 established that kimi does not reject
+# an unrecognized effort at all, so `classify_failure` has no effort branch to feed and
+# the markers advertised a check that never ran. Removed with the other Codex-port
+# vestiges rather than left as a contract fact nothing enforces.
+
+# The SHAPE of an effort token — our own defensive policy, NOT a captured claim about
+# kimi (no capture in docs/kimi-help/ records which levels kimi accepts; M0-6 only
+# records that an unrecognized one is silently ignored). Deliberately admits any
+# plausible token, including levels kimi may grow later: `reasoning_effort` is documented
+# as an OPEN per-model string, so a gate on this value space must test shape, never
+# vocabulary. It exists to drop what could not be an effort at all — empty, whitespace,
+# control characters, argv/env-hostile text, absurd length.
+REASONING_EFFORT_SHAPE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,31}")
+
+# The pre-spend effort FALLBACK vocabulary, used ONLY when the catalog cannot answer.
+# It is not evidence about kimi and must not be read as one: it is the conservative
+# closed set this server falls back to so that `pontonier.testing.conformance` can be
+# satisfied (which mandates rejecting a bogus effort while
+# `effort_silently_ignored_upstream` is set) when nothing authoritative is available.
+# Sourced from the levels param_contracts advertises, plus `max`. When the catalog
+# speaks, IT decides — see `backend.KimiBackend.validate_request`, which consults it
+# first precisely so a model-declared level this set omits is never refused.
+REASONING_EFFORT_FALLBACK_VOCABULARY = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh", "max"}
+)
 
 
 def _any(patterns: tuple[re.Pattern[str], ...], texts: tuple[str | None, ...]) -> bool:
@@ -347,21 +368,6 @@ def is_rate_limited(*texts: str | None) -> bool:
     return _any(_RATE_LIMIT_PATTERNS, texts)
 
 
-def is_reasoning_effort_rejection(*texts: str | None) -> bool:
-    """Whether the failure names the effort surface specifically.
-
-    Requires BOTH an effort marker and an effort-looking token, so an unrelated message
-    mentioning the word "effort" cannot steal the classification.
-    """
-    blob = "\n".join(t for t in texts if t)
-    if not blob:
-        return False
-    lowered = blob.lower()
-    if not any(m.lower() in lowered for m in REASONING_EFFORT_REJECTION_MARKERS):
-        return False
-    return REASONING_EFFORT_TOKEN_PATTERN.search(blob) is not None
-
-
 def parse_retry_after_ms(*texts: str | None) -> int | None:
     """Extract a retry delay in milliseconds, or None when the text carries none.
 
@@ -385,3 +391,56 @@ def parse_retry_after_ms(*texts: str | None) -> int | None:
             return int(value * 60_000)
         return int(value * 1000)
     return None
+
+
+# --- Shared-library contract (pontonier) -------------------------------------------
+# The declarative half of this contract, in the shared shape the pontonier
+# conformance/honesty kits consume. Values are DERIVED from the constants above —
+# tests/test_surface_honesty.py pins the derivations so the two can never drift.
+# Behavior (handshake staging, classification) lives in kimi.py and is reached
+# through `backend.KimiBackend` on the pontonier AgentBackend lifecycle, frozen at
+# contract_api_version = 1.
+PONTONIER_CONTRACT = _pontonier_contract.BackendContract(
+    backend_id="kimi",
+    display_name="Kimi",
+    bin_name=KIMI_BIN,
+    env_prefix="MOONBRIDGE_",
+    exec_argv_prefix=EXEC_SUBCOMMAND,
+    always_send_flags=ALWAYS_SEND_FLAGS,
+    help_gated_flags=tuple(sorted(HELP_GATED_FLAGS)),
+    forbidden_surface_phrases=FORBIDDEN_SURFACE_PHRASES,
+    supported_features=frozenset({"delegate", "model_validation", "empty_response_detection"}),
+    readonly_honesty_statement=READ_ONLY_CONFIDENTIALITY_LIMIT,
+    implicit_context_disclosure=SKILLS_DISCOVERY_FACT_FULL,
+    structured_output="prompt_append",
+    model_catalog=_pontonier_contract.ModelCatalog(
+        strategy="live_probe",
+        # kimi rejects an unknown alias outright (invalid_model), but only ADVISES
+        # on whether a given effort is honoured — see kimi_models.supported_efforts_for.
+        model_identifier_authority="authoritative",
+        effort_metadata_authority="advisory",
+    ),
+    isolation_policy=_pontonier_contract.IsolationPolicy.WORKTREE_ALL_TIERS,
+    needs_orphan_sweep=True,
+    # Verified on 0.35.0: kimi SILENTLY IGNORES an unrecognized
+    # KIMI_MODEL_THINKING_EFFORT (exits 0, answers at the model's default), so
+    # pre-spend local validation is the only protection.
+    effort_silently_ignored_upstream=True,
+    # Catalog-relative first — it decides alone when it speaks — with
+    # REASONING_EFFORT_FALLBACK_VOCABULARY standing in only when the catalog is silent,
+    # and failing OPEN on shape (see kimi_models and backend.validate_request).
+    effort_validation="token_floor_plus_catalog",
+    usage_event_markers=USAGE_EVENT_MARKERS,
+    extra_args=_pontonier_contract.ExtraArgsPolicy(),  # empty = refuse loudly (see config)
+    failure_signatures=_pontonier_contract.FailureSignatures(
+        auth=tuple(f"(?i){p.pattern}" for p in _AUTH_PATTERNS),
+        contract_drift=tuple(f"(?i){p.pattern}" for p in _DRIFT_PATTERNS),
+        invalid_model=(f"(?i){_INVALID_MODEL_PATTERN.pattern}",),
+        rate_limited=tuple(f"(?i){p.pattern}" for p in _RATE_LIMIT_PATTERNS),
+    ),
+    limits=_pontonier_contract.Limits(
+        max_argv_prompt_chars=MAX_ARGV_PROMPT_CHARS,
+        handshake_dir_name=HANDSHAKE_DIR_NAME,
+        answer_file_name=ANSWER_FILE_NAME,
+    ),
+)

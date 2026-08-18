@@ -5,9 +5,9 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+from pontonier.core import runtime
 
 from moonbridge import config, orchestration, prompts, server
-from moonbridge._core import runtime
 
 
 @pytest.fixture(autouse=True)
@@ -17,9 +17,9 @@ def _fake_worktree_lifecycle(monkeypatch, tmp_path_factory):
     behavior is covered against an actual repository in tests/test_runspace.py."""
     from types import SimpleNamespace
 
-    from moonbridge._core import worktree as wt
+    from pontonier.core import worktree as wt
 
-    def _create(repo, *, timeout, on_parent=None):
+    def _create(repo, *, timeout, on_parent=None, config=None):
         path = tmp_path_factory.mktemp("moonbridge-worktree")
         if on_parent is not None:
             on_parent(str(path))
@@ -265,7 +265,7 @@ def test_status_flags_warning(monkeypatch, clean_env):
 
 # --- review: extra branches --------------------------------------------------
 async def test_review_git_unavailable(monkeypatch, clean_env, tmp_path):
-    from moonbridge._core import gitdiff
+    from pontonier.core import gitdiff
 
     def boom(*a, **k):
         raise gitdiff.GitUnavailableError("git not found")
@@ -277,7 +277,7 @@ async def test_review_git_unavailable(monkeypatch, clean_env, tmp_path):
 
 
 async def test_review_generic_git_runtime_error(monkeypatch, clean_env, tmp_path):
-    from moonbridge._core import gitdiff
+    from pontonier.core import gitdiff
 
     def boom(*a, **k):
         raise RuntimeError("git diff timed out after 60s")
@@ -289,7 +289,7 @@ async def test_review_generic_git_runtime_error(monkeypatch, clean_env, tmp_path
 
 
 async def test_review_commit_scope_label(monkeypatch, clean_env, tmp_path):
-    from moonbridge._core import gitdiff
+    from pontonier.core import gitdiff
 
     monkeypatch.setattr(
         gitdiff,

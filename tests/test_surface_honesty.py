@@ -17,6 +17,7 @@ import json
 import re
 
 import pytest
+from pontonier.testing import conformance, surface_honesty
 
 from moonbridge import cli_contract, errors, manifest, schemas
 
@@ -41,11 +42,55 @@ def wire_text(wire: dict) -> str:
 
 @pytest.mark.parametrize("phrase", cli_contract.FORBIDDEN_SURFACE_PHRASES)
 def test_wire_prose_does_not_contradict_the_cli_contract(wire_text: str, phrase: str):
-    assert phrase not in wire_text, (
+    assert surface_honesty.find_forbidden_phrases(wire_text, (phrase,)) == [], (
         f"{phrase!r} appears in the agent-visible surface, but cli_contract.py says it "
         "does not exist. Say what actually runs: `kimi -p` under a generated read-only "
         "agent profile (no shell, no write tools)."
     )
+
+
+def test_contract_passes_pontonier_conformance():
+    assert conformance.check_contract(cli_contract.PONTONIER_CONTRACT) == []
+
+
+def test_contract_instance_derives_from_legacy_constants():
+    """The declarative PONTONIER_CONTRACT and the constants kimi.py still consumes
+    are the same facts in two shapes; pin the derivation so they cannot drift."""
+    c = cli_contract.PONTONIER_CONTRACT
+    assert c.bin_name == cli_contract.KIMI_BIN
+    assert c.always_send_flags == cli_contract.ALWAYS_SEND_FLAGS
+    assert set(c.help_gated_flags) == set(cli_contract.HELP_GATED_FLAGS)
+    assert c.forbidden_surface_phrases == cli_contract.FORBIDDEN_SURFACE_PHRASES
+    assert c.readonly_honesty_statement == cli_contract.READ_ONLY_CONFIDENTIALITY_LIMIT
+    assert c.implicit_context_disclosure == cli_contract.SKILLS_DISCOVERY_FACT_FULL
+    assert c.usage_event_markers == cli_contract.USAGE_EVENT_MARKERS
+    assert c.limits.handshake_dir_name == cli_contract.HANDSHAKE_DIR_NAME
+    assert c.limits.answer_file_name == cli_contract.ANSWER_FILE_NAME
+    assert c.limits.max_argv_prompt_chars == cli_contract.MAX_ARGV_PROMPT_CHARS
+    assert c.effort_silently_ignored_upstream  # the verified 0.35.0 silent-ignore fact
+
+
+def test_signature_regexes_match_what_the_predicates_match():
+    """The contract's regex tables classify the same evidence the predicates do —
+    the shared classifier must not weaken classification when the adapter
+    migration lands."""
+    import re
+
+    samples = {
+        "auth": "Error: 401 unauthorized — run `kimi login`",
+        "contract_drift": "error: unknown option '--sandbox'",
+        "invalid_model": 'Model "zap" is not configured in config.toml.',
+        "rate_limited": "429 Too Many Requests",
+    }
+    sigs = cli_contract.PONTONIER_CONTRACT.failure_signatures
+    assert cli_contract.is_auth_failure(samples["auth"])
+    assert any(re.search(p, samples["auth"]) for p in sigs.auth)
+    assert cli_contract.is_contract_drift(samples["contract_drift"])
+    assert any(re.search(p, samples["contract_drift"]) for p in sigs.contract_drift)
+    assert cli_contract.is_invalid_model(samples["invalid_model"])
+    assert any(re.search(p, samples["invalid_model"]) for p in sigs.invalid_model)
+    assert cli_contract.is_rate_limited(samples["rate_limited"])
+    assert any(re.search(p, samples["rate_limited"]) for p in sigs.rate_limited)
 
 
 def test_forbidden_phrases_are_still_contradicted_by_the_contract():

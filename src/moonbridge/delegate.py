@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pontonier.core import redaction, worktree
+
 from moonbridge import config, prompts, runspace
-from moonbridge._core import redaction, worktree
 from moonbridge.schemas import (
     ContextSummary,
     DelegateResult,
@@ -87,6 +88,7 @@ async def run_delegate(
     context; the diffstat still reflects the full diff."""
     outcome = await runspace.run_isolated(
         prompts.build_delegate_prompt(task),
+        kind="delegate",
         cwd=cwd,
         meta=meta,
         sandbox=sandbox,

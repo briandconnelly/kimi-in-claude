@@ -6,10 +6,10 @@ import os
 import subprocess
 
 import pytest
+from pontonier.core import gitdiff
+from pontonier.core.runtime import CommandRun
 
 from moonbridge import preflight
-from moonbridge._core import gitdiff
-from moonbridge._core.runtime import CommandRun
 
 # Git environment variables that redirect where git reads/writes its object store,
 # index, and repo config. If pytest is invoked with any of these exported (e.g. by a
@@ -131,8 +131,9 @@ def _no_real_kimi(request, monkeypatch):
     if request.node.get_closest_marker("integration"):
         return
 
+    from pontonier.core import runtime
+
     from moonbridge import cli_contract
-    from moonbridge._core import runtime
 
     real_sync = runtime.run_sync_capture
     real_async = runtime.run_async

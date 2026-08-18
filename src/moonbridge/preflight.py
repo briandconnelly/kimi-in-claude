@@ -16,8 +16,9 @@ import re
 import time
 from dataclasses import dataclass
 
+from pontonier.core import runtime
+
 from moonbridge import cli_contract
-from moonbridge._core import runtime
 
 _LONG_FLAG_RE = re.compile(r"--[a-z][a-z0-9-]+")
 

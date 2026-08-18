@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 
+from pontonier.core import runtime
+
 from moonbridge import cli_contract
-from moonbridge._core import runtime
 from moonbridge.schemas import ModelCatalogResult, ModelInfo
 
 _ADVISORY = (
@@ -39,8 +40,17 @@ PROBE_TIMEOUT_SECONDS = 10
 
 
 def _effort_token(value: object) -> str | None:
-    """An effort token, or None when it fails the defensive shape."""
-    if not isinstance(value, str) or not cli_contract.REASONING_EFFORT_TOKEN_PATTERN.match(value):
+    """An effort token, or None when it fails the defensive shape.
+
+    SHAPE only, never vocabulary. The catalog is what the model DECLARES, and
+    `effort_metadata_authority` is "advisory" — meaning it may be incomplete, not that
+    this parser may narrow it. Gating on a fixed level list dropped `minimal`/`xhigh`
+    from a declaring model, and because the truncated list is still non-empty the
+    server's guard did not fail open: it refused a level the model advertises.
+    """
+    if not isinstance(value, str):
+        return None
+    if not cli_contract.REASONING_EFFORT_SHAPE_PATTERN.fullmatch(value):
         return None
     return value
 

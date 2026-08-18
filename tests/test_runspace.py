@@ -18,10 +18,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pontonier.core import worktree
+from pontonier.core.runtime import CommandRun
 
-from moonbridge import cli_contract, kimi, runspace
-from moonbridge._core import worktree
-from moonbridge._core.runtime import CommandRun
+from moonbridge import cli_contract, config, kimi, runspace
 from moonbridge.schemas import Meta
 
 pytestmark = pytest.mark.anyio
@@ -79,7 +79,7 @@ def fake_kimi(monkeypatch):
         )
         return CommandRun(stdout, "", 0, 12, False)
 
-    monkeypatch.setattr("moonbridge._core.runtime.run_async", _fake_run_async)
+    monkeypatch.setattr("pontonier.core.runtime.run_async", _fake_run_async)
     return calls
 
 
@@ -88,6 +88,7 @@ async def test_consult_runs_under_the_read_only_agent(tmp_path, fake_kimi):
     repo = _repo(tmp_path)
     outcome = await runspace.run_isolated(
         "is this sound?",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -107,6 +108,7 @@ async def test_consult_leaves_the_real_working_tree_byte_identical(tmp_path, fak
     before = _tree_state(repo)
     await runspace.run_isolated(
         "is this sound?",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -125,6 +127,7 @@ async def test_consult_does_not_run_in_the_real_repo(tmp_path, fake_kimi):
     repo = _repo(tmp_path)
     await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -141,6 +144,7 @@ async def test_the_worktree_is_removed_afterwards(tmp_path, fake_kimi):
     repo = _repo(tmp_path)
     await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(repo),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -163,10 +167,11 @@ async def test_handshake_dir_never_reaches_a_captured_diff(tmp_path, monkeypatch
         )
         return CommandRun('{"role":"assistant","content":"done"}\n', "", 0, 5, False)
 
-    monkeypatch.setattr("moonbridge._core.runtime.run_async", _writing_run)
+    monkeypatch.setattr("pontonier.core.runtime.run_async", _writing_run)
     repo = _repo(tmp_path)
     outcome = await runspace.run_isolated(
         "add mul",
+        kind="consult",
         cwd=str(repo),
         meta=Meta(
             cwd="/x",
@@ -194,6 +199,7 @@ async def test_non_repo_consult_is_isolated_and_discloses_it(tmp_path, fake_kimi
     meta = _meta()
     outcome = await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(plain),
         meta=meta,
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -214,6 +220,7 @@ async def test_non_repo_consult_without_allow_non_repo_errors(tmp_path, fake_kim
     plain.mkdir()
     outcome = await runspace.run_isolated(
         "q",
+        kind="consult",
         cwd=str(plain),
         meta=_meta(),
         sandbox=cli_contract.SANDBOX_READ_ONLY,
@@ -237,11 +244,13 @@ def test_read_only_agent_document_grants_no_write_or_shell():
 
 
 def test_handshake_dir_name_matches_the_worktree_exclude():
-    """_core cannot import the parent package, so the handshake directory name is written
-    out literally in worktree._ARTIFACT_EXCLUDES. If the two drift, the prompt and answer
-    files silently start appearing in every delegate diff."""
+    """pontonier.core cannot know this bridge's handshake dir, so the exclusion lives in
+    config.WORKTREE_CONFIG.extra_excludes with the name written out literally. If it drifts
+    from cli_contract.HANDSHAKE_DIR_NAME, the prompt and answer files silently start
+    appearing in every delegate diff."""
     assert any(
-        cli_contract.HANDSHAKE_DIR_NAME in pattern for pattern in worktree._ARTIFACT_EXCLUDES
+        cli_contract.HANDSHAKE_DIR_NAME in pattern
+        for pattern in config.WORKTREE_CONFIG.extra_excludes
     )
 
 

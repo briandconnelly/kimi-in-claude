@@ -5,16 +5,55 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
-### Removed
+### Added
 
-- **Breaking:** the `transfer_unsupported`, `transfer_failed`, and `transfer_incomplete` error
-  codes, and the `app_server_stderr_tail` field on the error envelope. All four were inherited
-  from the Codex plugin this server was ported from: kimi has no session-transfer equivalent, so
-  no handler could emit them, while their repair hints told agents to retry a `kimi_transfer`
-  tool that does not exist (and to install `@openai/kimi`). Restore them only alongside a real
-  `kimi_transfer` tool.
+- `cli_contract.PONTONIER_CONTRACT` — the declarative CLI contract in the shared
+  `BackendContract` shape, derivation-pinned against the legacy constants
+  (including the verified silent-effort-ignore fact and field-scoped catalog
+  authority: aliases authoritative, effort metadata advisory).
+- `backend.KimiBackend` — this bridge's adapter on the frozen pontonier
+  `AgentBackend` protocol (`contract_api_version = 1`), with an argv-differential
+  test against the production command builder and a fail-open catalog-relative
+  effort guard matching the server's stance. Every model-bearing run is staged
+  through its `prepare()`, so that method cannot drift from production behavior.
+  Its other methods (`validate_request`, `finalize`, `classify_failure`,
+  `list_models`, `auth_probe`) have no production callers yet and are held to the
+  pontonier conformance suite rather than to parity with the routes that do run;
+  the two gaps this leaves are documented at their definitions.
+- The surface-honesty phrase scan now runs through `pontonier.testing`; the
+  moonbridge-specific quota/transfer/repair-hint honesty checks are unchanged.
+
+
+- Codex plugin and marketplace manifests, with Codex installation instructions and a shared,
+  host-neutral Kimi collaboration skill.
+- `docs/RELEASING.md`, the ordered release runbook, and `docs/adr/README.md`, an ADR index that
+  marks the records as decision history rather than current policy.
+- A "Further reading" section in `README.md` that routes to every other document.
 
 ### Changed
+
+- Every model-bearing run now goes through the pontonier `AgentBackend`
+  adapter: `kimi.run_kimi_exec` stages via `KimiBackend.prepare()` — the
+  out-of-workspace handshake dir, argv pointer, effort environment, the
+  prompt-appended schema instruction, and help-gate drops (surfaced on the new
+  `PreparedRun.dropped_flags`) — and keeps only the execution step (timeouts,
+  byte caps, event streaming, orphan-sweep marker). The schema-instruction
+  wording now has ONE source (`backend.schema_instruction`); the byte-parity
+  test that pinned the old duplication is retired in favor of a behavioral pin
+  that the instruction reaches the staged prompt file. Wire snapshots are
+  byte-identical; argv is unchanged for every tier.
+
+
+- Generic core machinery (`jobs`, `worktree`, `gitdiff`, `redaction`, `runtime`,
+  `gitproc`, `streamcap`, `idempotency`, `workspace`, `jsoncache`) now comes from
+  the shared [pontonier](https://github.com/briandconnelly/pontonier) library —
+  this repo's `_core/` was its extraction source of record, so the code is the
+  same (the redaction newline fix, worktree hardening, and orphan sweep all
+  originated here). This bridge's worktree knobs (`moonbridge-worktree-` prefix,
+  `moonbridge@local` baseline identity, the `.moonbridge` handshake-dir diff
+  exclusion) are pinned in `config.WORKTREE_CONFIG`, so externally visible
+  behavior is unchanged; all wire snapshots are byte-identical.
+
 
 - `isolation` joins the shared parameter-contract registry: its 295-character inline
   description is now a 225-character summary, with AGENTS.md-always-loads, the skill-name
@@ -65,16 +104,54 @@ All notable changes to this project are documented here, following
   view of the result-format snapshot moved, the `serialized` view is byte-identical, and no
   stored job record can contain a removed code or the never-populated field.
 
-### Added
+### Removed
 
-- Codex plugin and marketplace manifests, with Codex installation instructions and a shared,
-  host-neutral Kimi collaboration skill.
-- `docs/RELEASING.md`, the ordered release runbook, and `docs/adr/README.md`, an ADR index that
-  marks the records as decision history rather than current policy.
-- A "Further reading" section in `README.md` that routes to every other document.
+- Codex-port residue that outlived the fork, none of it wire-visible: the inert
+  `DISABLE_FEATURE_FLAG`/`REMOTE_PLUGIN_FEATURE` names, `run_kimi_exec`'s
+  accepted-but-unused `add_dirs`/`skip_git_repo_check`/`ephemeral` parameters,
+  the dead `TransferMeta`/`TransferResult`/`TRANSFER_SCHEMA` models (no
+  `kimi_transfer` tool exists), the uncalled
+  `cli_contract.is_reasoning_effort_rejection` predicate together with the
+  `REASONING_EFFORT_REJECTION_MARKERS` and `REASONING_EFFORT_TOKEN_PATTERN` it
+  read (M0-6 established kimi never rejects an unrecognized effort, so the
+  markers described a classifier branch that cannot exist), and stale docstrings
+  describing an in-worktree handshake and an `--output-last-message` answer
+  channel that kimi does not have (the handshake lives outside the workspace;
+  the answer comes from the event stream / answer file).
+
+
+- **Breaking:** the `transfer_unsupported`, `transfer_failed`, and `transfer_incomplete` error
+  codes, and the `app_server_stderr_tail` field on the error envelope. All four were inherited
+  from the Codex plugin this server was ported from: kimi has no session-transfer equivalent, so
+  no handler could emit them, while their repair hints told agents to retry a `kimi_transfer`
+  tool that does not exist (and to install `@openai/kimi`). Restore them only alongside a real
+  `kimi_transfer` tool.
 
 ### Fixed
 
+- Multi-line private-key blocks (PEM/PKCS8/OpenSSH/PGP) in gathered diffs and
+  returned prose are now redacted statefully (via pontonier 0.4.0): the
+  BEGIN/END markers stay visible, every body line between them is dropped, and
+  an unterminated block fails closed. Previously only the BEGIN marker was
+  masked while the entire base64 body was sent.
+- A model's declared `minimal` and `xhigh` reasoning efforts are no longer
+  refused pre-spend. The model-catalog parser gated `supportEfforts` and
+  `defaultEffort` on a fixed `low|medium|high|max` vocabulary, so those two
+  levels were silently dropped from what an alias declares. The truncated set is
+  still non-empty, so the pre-spend guard did not fail open: it refused
+  `reasoning_effort="minimal"` as "not one this model declares" — for a level the
+  model does declare — and its repair hint steered agents to the truncated list.
+  `kimi_models` and `kimi://models` under-reported the same set. The parser now
+  gates on SHAPE, not vocabulary, so any level a model declares survives,
+  including ones kimi adds later; malformed tokens are still dropped. Pre-existing
+  (not introduced by the pontonier migration).
+- Redaction now covers five more credential formats, inherited with pontonier
+  0.5.0: fine-grained GitHub tokens (`github_pat_`), GitLab PATs (`glpat-`),
+  Anthropic keys (`sk-ant-`), npm tokens (`npm_`), and PyPI tokens (`pypi-`).
+  Previously only `AKIA`, `ghp_`, and `xoxb` were masked, so the other five
+  reached callers verbatim in gathered diffs and returned prose. This widens what
+  is masked, so a literal string in those shapes (a docs example, a test fixture)
+  is now replaced in returned text.
 - `CONTRIBUTING.md` pointed at an `AGENTS.md` section that does not exist and described an
   issue-claim protocol that `AGENTS.md` says does not exist.
 - The allowed commit scopes had no documented home, so the rule requiring

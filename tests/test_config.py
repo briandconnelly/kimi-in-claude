@@ -15,12 +15,21 @@ def test_job_store_configures_worktree_cleanup(clean_env):
     import tempfile
     from pathlib import Path
 
-    from moonbridge._core import worktree
-
     store = config.job_store()
-    # The store may clean up only the throwaway-worktree temp area.
+    # The store may clean up only the throwaway-worktree temp area — THIS bridge's
+    # pinned prefix, not the library default.
     assert store.cleanup_root == Path(tempfile.gettempdir())
-    assert store.cleanup_prefix == worktree.WORKTREE_PREFIX
+    assert store.cleanup_prefix == config.WORKTREE_CONFIG.prefix == "moonbridge-worktree-"
+
+
+def test_the_baseline_commit_identity_is_pinned_to_this_bridge():
+    """AGENTS.md pins all three WORKTREE_CONFIG knobs as externally visible: changing one
+    is a behavior change, not a refactor. The prefix and the handshake exclusion were
+    already guarded; the identity was not, so a silent regression to pontonier's own
+    defaults would have authored delegate baseline commits as another tool while the
+    whole gate stayed green. It is visible in `git log` inside a delegate worktree."""
+    assert config.WORKTREE_CONFIG.identity_name == "moonbridge"
+    assert config.WORKTREE_CONFIG.identity_email == "moonbridge@local"
 
 
 def test_defaults_builtin(clean_env):

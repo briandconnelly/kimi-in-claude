@@ -22,9 +22,10 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from pontonier.core import redaction
+from pontonier.core.jobs import ActivityRecorder
+
 from moonbridge import delegate, orchestration
-from moonbridge._core import redaction
-from moonbridge._core.jobs import ActivityRecorder
 from moonbridge.errors import make_error, serialize_error
 from moonbridge.schemas import (
     ErrorResult,

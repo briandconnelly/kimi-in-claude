@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast, get_args
 
+from pontonier.core import gitdiff, redaction
+
 from moonbridge import config, kimi, normalize, prompts, runspace
-from moonbridge._core import gitdiff, redaction
 from moonbridge.errors import make_error, serialize_error
 from moonbridge.schemas import (
     CONSULT_OUTPUT_SCHEMA,
@@ -38,7 +39,7 @@ from moonbridge.schemas import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from moonbridge._core.gitdiff import DiffResult
+    from pontonier.core.gitdiff import DiffResult
 
 
 def build_coverage(*, scope: str, diff: DiffResult) -> Coverage:
@@ -407,6 +408,7 @@ async def run_consult(
     prompt = prompts.build_consult_prompt(question, extra_context or "")
     outcome = await runspace.run_isolated(
         prompt,
+        kind="consult",
         cwd=cwd,
         meta=meta,
         sandbox=sandbox,
@@ -537,6 +539,7 @@ async def run_review(
     # a review cannot modify what it is reviewing.
     outcome = await runspace.run_isolated(
         prompt,
+        kind="review_changes",
         cwd=cwd,
         meta=meta,
         sandbox=sandbox,

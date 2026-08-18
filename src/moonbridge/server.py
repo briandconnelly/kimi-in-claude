@@ -33,8 +33,11 @@ if TYPE_CHECKING:
     import logging
     from collections.abc import Awaitable, Callable
 
-    from moonbridge._core.jobs import JobStore
+    from pontonier.core.jobs import JobStore
 
+
+from pontonier.core import gitdiff, idempotency, redaction, workspace, worktree
+from pontonier.core.jobs import DiscardOutcome
 
 from moonbridge import (
     __version__,
@@ -48,8 +51,6 @@ from moonbridge import (
     preflight,
     prompts,
 )
-from moonbridge._core import gitdiff, idempotency, redaction, workspace, worktree
-from moonbridge._core.jobs import DiscardOutcome
 from moonbridge.errors import make_error, serialize_error, serialize_error_info
 from moonbridge.kimi_models import read_model_catalog, supported_efforts_for
 from moonbridge.schemas import (

@@ -1,8 +1,10 @@
 """Parse a `kimi -p` outcome into the normalized result envelope.
 
-The final answer comes from --output-last-message (stable). The JSONL --json
-stream is parsed TOLERANTLY for optional metadata (token usage, session id) only,
-so an event-schema change degrades metadata rather than breaking a run."""
+kimi has no --output-last-message: the final answer is recovered from the
+stream-json assistant events (or, for the propose tier, the answer file the
+prompt asks kimi to write). The event stream is parsed TOLERANTLY — an
+event-schema change degrades metadata (token usage, session id) rather than
+breaking a run."""
 
 from __future__ import annotations
 
