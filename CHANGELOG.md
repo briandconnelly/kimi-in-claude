@@ -111,7 +111,10 @@ All notable changes to this project are documented here, following
   accepted-but-unused `add_dirs`/`skip_git_repo_check`/`ephemeral` parameters,
   the dead `TransferMeta`/`TransferResult`/`TRANSFER_SCHEMA` models (no
   `kimi_transfer` tool exists), the uncalled
-  `cli_contract.is_reasoning_effort_rejection` predicate, and stale docstrings
+  `cli_contract.is_reasoning_effort_rejection` predicate together with the
+  `REASONING_EFFORT_REJECTION_MARKERS` and `REASONING_EFFORT_TOKEN_PATTERN` it
+  read (M0-6 established kimi never rejects an unrecognized effort, so the
+  markers described a classifier branch that cannot exist), and stale docstrings
   describing an in-worktree handshake and an `--output-last-message` answer
   channel that kimi does not have (the handshake lives outside the workspace;
   the answer comes from the event stream / answer file).
@@ -131,6 +134,17 @@ All notable changes to this project are documented here, following
   BEGIN/END markers stay visible, every body line between them is dropped, and
   an unterminated block fails closed. Previously only the BEGIN marker was
   masked while the entire base64 body was sent.
+- A model's declared `minimal` and `xhigh` reasoning efforts are no longer
+  refused pre-spend. The model-catalog parser gated `supportEfforts` and
+  `defaultEffort` on a fixed `low|medium|high|max` vocabulary, so those two
+  levels were silently dropped from what an alias declares. The truncated set is
+  still non-empty, so the pre-spend guard did not fail open: it refused
+  `reasoning_effort="minimal"` as "not one this model declares" — for a level the
+  model does declare — and its repair hint steered agents to the truncated list.
+  `kimi_models` and `kimi://models` under-reported the same set. The parser now
+  gates on SHAPE, not vocabulary, so any level a model declares survives,
+  including ones kimi adds later; malformed tokens are still dropped. Pre-existing
+  (not introduced by the pontonier migration).
 - Redaction now covers five more credential formats, inherited with pontonier
   0.5.0: fine-grained GitHub tokens (`github_pat_`), GitLab PATs (`glpat-`),
   Anthropic keys (`sk-ant-`), npm tokens (`npm_`), and PyPI tokens (`pypi-`).

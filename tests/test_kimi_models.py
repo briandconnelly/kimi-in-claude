@@ -119,6 +119,48 @@ def test_junk_effort_tokens_are_dropped(probe):
     assert model.supported_reasoning_efforts == ["low", "high"]
 
 
+def test_the_catalog_keeps_every_effort_the_model_declares(probe):
+    """The catalog is what the model DECLARES, and `reasoning_effort` is documented as an
+    open per-model string, so the parser's shape gate must not double as a vocabulary.
+
+    Regression: the gate ran `REASONING_EFFORT_TOKEN_PATTERN` (low|medium|high|max), which
+    silently dropped `minimal` and `xhigh` — two efforts param_contracts advertises. The
+    truncated set is non-empty, so `_reasoning_effort_unsupported_error` did NOT fail open:
+    it refused `minimal` pre-spend as "not one this model declares", for an effort the
+    model literally declares, and steered the agent to the truncated list."""
+    probe({"models": {"a/b": {"supportEfforts": ["minimal", "low", "medium", "high", "xhigh"]}}})
+    model = kimi_models.read_model_catalog().models[0]
+    assert model.supported_reasoning_efforts == ["minimal", "low", "medium", "high", "xhigh"]
+
+
+def test_the_catalog_keeps_a_novel_effort_it_declares(probe):
+    """`effort_metadata_authority="advisory"` means the catalog may be incomplete, never
+    that this parser may narrow it. An effort kimi grows tomorrow must survive the gate."""
+    probe({"models": {"a/b": {"supportEfforts": ["ultra"], "defaultEffort": "ultra"}}})
+    model = kimi_models.read_model_catalog().models[0]
+    assert model.supported_reasoning_efforts == ["ultra"]
+    assert model.default_reasoning_effort == "ultra"
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "",  # empty
+        " ",  # whitespace only
+        "has space",  # argv/env-hostile
+        "with\nnewline",
+        "with\x00nul",
+        "x" * 200,  # absurd length
+        "-leading-dash",
+    ],
+)
+def test_the_catalog_effort_gate_still_refuses_malformed_tokens(probe, token):
+    """The gate stays defensive: it drops what is not plausibly an effort token at all.
+    Widening it to admit unknown VOCABULARY must not widen it to admit any string."""
+    probe({"models": {"a/b": {"supportEfforts": ["low", token]}}})
+    assert kimi_models.read_model_catalog().models[0].supported_reasoning_efforts == ["low"]
+
+
 def test_an_all_junk_effort_list_is_none_not_empty(probe):
     """None means "unknown" and must not be confused with [] ("nothing allowed") — the
     pre-spend guard refuses a run only when the supported set is genuinely known."""
@@ -193,6 +235,19 @@ def test_an_oversized_payload_is_refused(probe):
 def test_supported_efforts_for_a_known_alias(probe):
     probe(REAL_PAYLOAD)
     assert kimi_models.supported_efforts_for("acme/model-one") == ["low", "high", "max"]
+
+
+def test_supported_efforts_for_reaches_the_guard_without_narrowing(probe):
+    """The composed defect, pinned end to end: this function feeds
+    `server._reasoning_effort_unsupported_error`, which refuses whenever the returned set
+    is non-empty and lacks the requested effort. A parser that dropped `minimal`/`xhigh`
+    therefore did NOT fail open — it produced a short, confident set and the server
+    refused a level the model declares, repairing toward the truncated list."""
+    probe({"models": {"a/b": {"supportEfforts": ["minimal", "low", "high", "xhigh"]}}})
+    supported = kimi_models.supported_efforts_for("a/b")
+    assert supported == ["minimal", "low", "high", "xhigh"]
+    for declared in ("minimal", "xhigh"):
+        assert declared in supported  # would be refused pre-spend if dropped here
 
 
 def test_supported_efforts_for_an_unknown_alias_is_none(probe):

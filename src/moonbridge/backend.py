@@ -66,30 +66,39 @@ class KimiBackend:
     """The behavior half of the Kimi contract (facts live on PONTONIER_CONTRACT)."""
 
     def validate_request(self, request: RunRequest) -> ClassifiedFailure | None:
-        # Verified on 0.35.0: kimi silently ignores an unrecognized effort (exit 0,
-        # default-effort answer), so pre-spend validation is the ONLY protection — and
-        # pontonier's conformance check makes it mandatory while
-        # `effort_silently_ignored_upstream` is set. Two layers: the vocabulary floor
-        # (a value matching no kimi effort level at all is always wrong), then the
-        # catalog-relative check, which fails OPEN when the alias is unknown.
+        # Verified on 0.35.0 (docs/kimi-help/0.35.0/M0-FINDINGS.md, M0-6): kimi silently
+        # ignores an unrecognized effort (exit 0, default-effort answer), so pre-spend
+        # validation is the ONLY protection — and pontonier's conformance check makes it
+        # mandatory while `effort_silently_ignored_upstream` is set.
         #
-        # The floor deliberately reads REASONING_EFFORT_VOCABULARY, not the
-        # similarly-named REASONING_EFFORT_TOKEN_PATTERN: that pattern exists to scan
-        # kimi's rejection prose and omits `minimal`/`xhigh`, so `fullmatch`ing it here
-        # refused two efforts param_contracts advertises to agents.
+        # ORDER MATTERS. The catalog is consulted FIRST and decides alone when it speaks:
+        # it reports what the model declares, and no local list may overrule it. The
+        # fallback vocabulary runs ONLY when the catalog is silent, because that is the
+        # sole case where conformance still demands a verdict and nothing authoritative
+        # is available. Running the closed set first would refuse a level the model
+        # declares but the set omits — the defect this ordering exists to prevent.
+        #
+        # No capture records kimi's accepted vocabulary (M0-6 only proves a bogus value is
+        # ignored), so the fallback set is this server's conservative policy, not evidence.
         effort = request.reasoning_effort
         if effort is None:
             return None
-        if effort.strip().lower() not in cli_contract.REASONING_EFFORT_VOCABULARY:
-            return ClassifiedFailure(
-                code="invalid_reasoning_effort",
-                detail="the requested reasoning_effort matches no kimi effort level.",
-            )
         supported = kimi_models.supported_efforts_for(request.model)
-        if supported and effort not in supported:
+        if supported:
+            if effort not in supported:
+                return ClassifiedFailure(
+                    code="invalid_reasoning_effort",
+                    detail="the requested reasoning_effort is not one this model declares.",
+                )
+            return None
+        # Catalog silent. Compare the EXACT value `prepare()` will send: normalizing here
+        # (an earlier `.strip().lower()`) validated a string the run never used, so
+        # " HIGH " passed the gate and rode into KIMI_MODEL_THINKING_EFFORT raw, where an
+        # unrecognized value is silently ignored — the very outcome this guard prevents.
+        if effort not in cli_contract.REASONING_EFFORT_FALLBACK_VOCABULARY:
             return ClassifiedFailure(
                 code="invalid_reasoning_effort",
-                detail="the requested reasoning_effort is not one this model declares.",
+                detail="the requested reasoning_effort matches no known kimi effort level.",
             )
         return None
 

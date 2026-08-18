@@ -313,21 +313,32 @@ _RETRY_AFTER_PATTERNS = (
     re.compile(r"try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|minutes?)", re.I),
 )
 
-# A rejected reasoning effort. Effort rides an env var, so kimi validates it against the
-# model's `support_efforts`; these markers separate "your effort was bad" from real drift.
-REASONING_EFFORT_REJECTION_MARKERS = ("support_efforts", "thinking.effort", "effort")
-REASONING_EFFORT_TOKEN_PATTERN = re.compile(r"\b(low|medium|high|max)\b", re.I)
+# NOTE: REASONING_EFFORT_REJECTION_MARKERS lived here to separate "your effort was bad"
+# from real contract drift. It was never read: M0-6 established that kimi does not reject
+# an unrecognized effort at all, so `classify_failure` has no effort branch to feed and
+# the markers advertised a check that never ran. Removed with the other Codex-port
+# vestiges rather than left as a contract fact nothing enforces.
 
-# The pre-spend effort FLOOR: every level any kimi model is known to advertise.
-# Deliberately a SUPERSET — the per-model catalog refines it, and this only has to
-# catch values that match no kimi vocabulary at all (the run would otherwise exit 0
-# at the default effort while the envelope claimed the requested one).
-#
-# NOT the same thing as REASONING_EFFORT_TOKEN_PATTERN above, and not interchangeable
-# with it: that pattern SCANS kimi's rejection prose for a mentioned level (substring
-# semantics, used with `.match()` at kimi_models:44) and omits `minimal`/`xhigh`.
-# Gating input on it refuses efforts this server advertises in param_contracts.
-REASONING_EFFORT_VOCABULARY = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
+# The SHAPE of an effort token — our own defensive policy, NOT a captured claim about
+# kimi (no capture in docs/kimi-help/ records which levels kimi accepts; M0-6 only
+# records that an unrecognized one is silently ignored). Deliberately admits any
+# plausible token, including levels kimi may grow later: `reasoning_effort` is documented
+# as an OPEN per-model string, so a gate on this value space must test shape, never
+# vocabulary. It exists to drop what could not be an effort at all — empty, whitespace,
+# control characters, argv/env-hostile text, absurd length.
+REASONING_EFFORT_SHAPE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,31}")
+
+# The pre-spend effort FALLBACK vocabulary, used ONLY when the catalog cannot answer.
+# It is not evidence about kimi and must not be read as one: it is the conservative
+# closed set this server falls back to so that `pontonier.testing.conformance` can be
+# satisfied (which mandates rejecting a bogus effort while
+# `effort_silently_ignored_upstream` is set) when nothing authoritative is available.
+# Sourced from the levels param_contracts advertises, plus `max`. When the catalog
+# speaks, IT decides — see `backend.KimiBackend.validate_request`, which consults it
+# first precisely so a model-declared level this set omits is never refused.
+REASONING_EFFORT_FALLBACK_VOCABULARY = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh", "max"}
+)
 
 
 def _any(patterns: tuple[re.Pattern[str], ...], texts: tuple[str | None, ...]) -> bool:
@@ -415,8 +426,9 @@ PONTONIER_CONTRACT = _pontonier_contract.BackendContract(
     # KIMI_MODEL_THINKING_EFFORT (exits 0, answers at the model's default), so
     # pre-spend local validation is the only protection.
     effort_silently_ignored_upstream=True,
-    # Universal token floor (low|medium|high|max) + catalog-relative refinement,
-    # failing OPEN when the catalog cannot answer (see kimi_models).
+    # Catalog-relative first — it decides alone when it speaks — with
+    # REASONING_EFFORT_FALLBACK_VOCABULARY standing in only when the catalog is silent,
+    # and failing OPEN on shape (see kimi_models and backend.validate_request).
     effort_validation="token_floor_plus_catalog",
     usage_event_markers=USAGE_EVENT_MARKERS,
     extra_args=_pontonier_contract.ExtraArgsPolicy(),  # empty = refuse loudly (see config)

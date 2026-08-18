@@ -140,6 +140,43 @@ def test_validate_request_rejects_non_kimi_effort_token():
     assert rejected.code == "invalid_reasoning_effort"
 
 
+def test_validate_request_lets_the_catalog_overrule_the_fallback_set(monkeypatch):
+    """When the catalog speaks it decides ALONE. A model may declare a level the local
+    fallback set omits (the set is this server's policy, not captured evidence), and
+    refusing it would contradict `effort_metadata_authority="advisory"` — advisory means
+    the catalog may be incomplete, never that a local list outranks it."""
+    monkeypatch.setattr(kimi_models, "supported_efforts_for", lambda model, catalog=None: ["ultra"])
+    novel = RunRequest(
+        kind="consult",
+        prompt="q",
+        cwd=".",
+        timeout_seconds=10,
+        model="m1",
+        reasoning_effort="ultra",
+    )
+    assert "ultra" not in cli_contract.REASONING_EFFORT_FALLBACK_VOCABULARY
+    assert BACKEND.validate_request(novel) is None
+    # ...and the catalog still refuses what it does not declare, even a familiar level.
+    familiar = novel.__class__(**{**novel.__dict__, "reasoning_effort": "high"})
+    assert BACKEND.validate_request(familiar) is not None
+
+
+def test_validate_request_judges_the_exact_value_prepare_will_send(monkeypatch):
+    """The fallback gate must test the string the run actually sends. Normalizing it
+    (`.strip().lower()`) validated a value `prepare()` never used: " HIGH " passed and
+    rode into KIMI_MODEL_THINKING_EFFORT raw, where kimi silently ignores it."""
+    monkeypatch.setattr(kimi_models, "supported_efforts_for", lambda model, catalog=None: None)
+    padded = RunRequest(
+        kind="consult",
+        prompt="q",
+        cwd=".",
+        timeout_seconds=10,
+        model="mystery",
+        reasoning_effort=" HIGH ",
+    )
+    assert BACKEND.validate_request(padded) is not None
+
+
 @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high", "xhigh", "max"])
 def test_validate_request_admits_every_documented_effort(effort, monkeypatch):
     """reasoning_effort is documented as an OPEN per-model string (param_contracts:
