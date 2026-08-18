@@ -289,13 +289,18 @@ def test_only_prepare_is_wired_into_production():
     src_dir = pathlib.Path(__file__).resolve().parent.parent / "src" / "moonbridge"
     called: dict[str, list[str]] = {}
     for path in sorted(src_dir.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        # Label by the path relative to src_dir, not `path.name`: the walk is recursive,
+        # so a subpackage would otherwise report two different files as the same
+        # `helpers.py:12`. Passing it as `filename` also puts it in any SyntaxError,
+        # which reports `<unknown>` by default.
+        rel = path.relative_to(src_dir).as_posix()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=rel)):
             if (
                 isinstance(node, ast.Attribute)
                 and isinstance(node.value, ast.Name)
                 and node.value.id == "BACKEND"
             ):
-                called.setdefault(node.attr, []).append(f"{path.name}:{node.lineno}")
+                called.setdefault(node.attr, []).append(f"{rel}:{node.lineno}")
 
     # Method names only — pinning call sites would make unrelated edits fail this test.
     assert set(called) == {"prepare"}, (
